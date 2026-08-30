@@ -14,16 +14,7 @@
    "tumu"
   ],
   "olusturma": "2026-08-30 08:39",
-  "kullanim": 0,
-  "son_kullanim": null
- },
- "sk-35ceca83428c61be0f07a309": {
-  "isim": "Test SC",
-  "saglayicilar": [
-   "soundcloud"
-  ],
-  "olusturma": "2026-08-30 08:40",
-  "kullanim": 0,
-  "son_kullanim": null
+  "kullanim": 1,
+  "son_kullanim": "2026-08-30 08:40"
  }
 }
