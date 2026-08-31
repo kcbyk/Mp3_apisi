@@ -136,23 +136,44 @@ def link_coz(item, fmt="mp3", kalite="320"):
 LINK_CACHE = {}                       # (url, fmt, kalite) -> (zaman, direct_url)
 LINK_TTL = int(os.environ.get("SARKI_LINK_TTL", "480"))   # link ~8 dk gecerli
 _link_kilidi = threading.Lock()
+LINK_BEKLE = {}                       # anahtar -> {"event", "sonuc"} — devam eden çözümler
 
 
-def link_coz_cached(item, fmt="mp3", kalite="320"):
-    """Önbellekli link çözümleme: çözülmüşse anında döner, yoksa çözer ve saklar."""
+def link_coz_cached(item, fmt="mp3", kalite="320", bekleme_sn=35):
+    """Önbellekli + KETLENMELİ link çözümleme:
+    - çözülmüşse anında döner,
+    - aynı link şu an çözülüyorsa ONA KATILIR (yeni dönüşüm başlatmaz, kalanı bekler),
+    - yoksa çözer ve önbelleğe koyar."""
     a = (item.get("url"), fmt, str(kalite))
     with _link_kilidi:
         k = LINK_CACHE.get(a)
         if k and time.time() - k[0] < LINK_TTL:
             return k[1], None
-    u, h = link_coz(item, fmt, kalite)
-    if u:
+        if a in LINK_BEKLE:
+            kayit = LINK_BEKLE[a]
+            ben_cozuceem = False
+        else:
+            kayit = {"event": threading.Event(), "sonuc": None}
+            LINK_BEKLE[a] = kayit
+            ben_cozuceem = True
+    if not ben_cozuceem:
+        kayit["event"].wait(bekleme_sn)          # pre-warm'ın bitmesini bekle (kalan süre)
+        return kayit["sonuc"] or (None, "link çözülmesi zaman aşımına uğradı — tekrar dene")
+    u, h = None, "çözüm hatası"
+    try:
+        u, h = link_coz(item, fmt, kalite)
+        if u:
+            with _link_kilidi:
+                if len(LINK_CACHE) > 60:         # kapasite korumasi
+                    eski = min(LINK_CACHE, key=lambda x: LINK_CACHE[x][0])
+                    LINK_CACHE.pop(eski, None)
+                LINK_CACHE[a] = (time.time(), u)
+        return u, h
+    finally:
+        kayit["sonuc"] = (u, h)
+        kayit["event"].set()
         with _link_kilidi:
-            if len(LINK_CACHE) > 60:   # kapasite korumasi
-                eski = min(LINK_CACHE, key=lambda x: LINK_CACHE[x][0])
-                LINK_CACHE.pop(eski, None)
-            LINK_CACHE[a] = (time.time(), u)
-    return u, h
+            LINK_BEKLE.pop(a, None)
 
 
 def onizleme_baslat(sonuclar):
