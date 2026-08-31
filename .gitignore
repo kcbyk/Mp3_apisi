@@ -1,0 +1,15 @@
+# SIRRLAR — asla pushlama!
+bot_token.txt
+api_key.txt
+sc_client_id.txt
+
+# Çalışma zamanı
+muzik/
+*.mp3
+kutuphane.json
+__pycache__/
+*.pyc
+.venv/
+
+# key deposu (yalniz depolama dalinda yasamali)
+keys.json

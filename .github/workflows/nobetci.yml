@@ -1,0 +1,50 @@
+name: Nöbetçi 🔔
+# 10 dk'da bir API sağlığını kontrol eder; 3 deneme sonrası da ölüyse sorun açar.
+# Not: bu kontrol Render'ı sıcak da tutar (uyku önlemi ekstra bonus).
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+
+jobs:
+  kontrol:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sağlık kontrolü (3 deneme)
+        id: kontrol
+        run: |
+          kod="000"
+          for deneme in 1 2 3; do
+            kod=$(curl -s -o /dev/null -w "%{http_code}" --max-time 40 \
+              https://mp3-apisi.onrender.com/api/v1/health || echo 000)
+            echo "deneme $deneme: HTTP $kod"
+            [ "$kod" = "200" ] && break
+            sleep 60   # uyanma payı / geçici ağ
+          done
+          if [ "$kod" != "200" ]; then
+            echo "durum=olu" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Sorun aç (ölüyse)
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const acik = await github.rest.issues.listForRepo({
+              ...context.repo, labels: 'nobetci', state: 'open'
+            });
+            if (acik.data.length === 0) {
+              await github.rest.issues.create({
+                ...context.repo,
+                title: '🔔 Nöbetçi: API erişilemez!',
+                labels: ['nobetci'],
+                body: `Health check 3 denemede de başarısız.\n\n` +
+                      `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\n` +
+                      `Kontrol et: https://render.com — mp3-apisi servisi. (Uzuyorsa cron-job veya Space keepalive'i de kontrol edilsin.)`
+              });
+            }
