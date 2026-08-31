@@ -5,8 +5,8 @@
    "youtube"
   ],
   "olusturma": "2026-08-30 08:50",
-  "kullanim": 35,
-  "son_kullanim": "2026-08-30 10:28"
+  "kullanim": 39,
+  "son_kullanim": "2026-08-31 02:58"
  },
  "sk-71c69f4de1f4b912957fed45": {
   "isim": "savio",
@@ -14,6 +14,15 @@
    "youtube"
   ],
   "olusturma": "2026-08-31 01:54",
+  "kullanim": 0,
+  "son_kullanim": null
+ },
+ "sk-9cc6700d85baffc2f1591053": {
+  "isim": "Stream Test",
+  "saglayicilar": [
+   "tumu"
+  ],
+  "olusturma": "2026-08-31 02:59",
   "kullanim": 0,
   "son_kullanim": null
  }
