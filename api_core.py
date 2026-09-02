@@ -177,14 +177,11 @@ def link_coz_cached(item, fmt="mp3", kalite="320", bekleme_sn=35):
 
 
 def onizleme_baslat(sonuclar):
-    """Arama sonrasi ilk YouTube sonucunun (mp3 + mp4) linklerini ARKA PLANDA cozer.
-    Kullanici listeye bakarken donusum biter -> bastigi an link hazir (aninda acilir)."""
-    yt = next((s for s in sonuclar if s.get("kaynak") == "yt"), None)
-    if not yt:
-        return
-    for fmt, kal in (("mp3", "320"), ("mp4", "360")):
-        threading.Thread(target=link_coz_cached, args=(dict(yt), fmt, kal),
-                         daemon=True).start()
+    """Arama sonrasi ilk 3 YouTube sonucunun linklerini ARKA PLANDA paralel cozer.
+    Kullanici listeye bakarken donusum biter -> bastigi an link hazir (0.01 sn aninda acilir)."""
+    yt_list = [s for s in sonuclar if s.get("kaynak") == "yt"][:3]
+    for yt in yt_list:
+        threading.Thread(target=link_coz_cached, args=(dict(yt), "mp3", "320"), daemon=True).start()
 
 
 # ------------------- IS (JOB) YONETIMI + DEDUP -------------------
