@@ -796,7 +796,8 @@ _tt_son_cagri = [0.0]
 
 
 def _tt_get(yol, **params):
-    """tikwm API cagrisi — 1 istek/sn limitine saygili + UA. JSON döner (hata: None)."""
+    """tikwm API cagrisi — 1 istek/sn limitine saygili + UA. JSON döner (hata: None).
+    Zincir: direkt tikwm → r.jina.ai sarmalı (datacenter IP'lerinde CF duvarını aşar)."""
     import time as _t
     UA = {"User-Agent": ARA_HTTP["User-Agent"], "Referer": "https://www.tikwm.com/",
           "Accept": "application/json"}
@@ -805,15 +806,29 @@ def _tt_get(yol, **params):
         if gecen < 1.15:
             _t.sleep(1.15 - gecen)
         _tt_son_cagri[0] = _t.time()
+    tam = f"https://www.tikwm.com/api/{yol}"
     try:
-        r = requests.get(f"https://www.tikwm.com/api/{yol}", params=params,
-                         headers=UA, timeout=25)
-        if r.status_code != 200:
-            return None
-        return r.json()
+        r = requests.get(tam, params=params, headers=UA, timeout=25)
+        if r.status_code == 200:
+            return r.json()
     except Exception as ex:
-        print("[tikwm] hata:", str(ex)[:70], flush=True)
-        return None
+        print("[tikwm] direkt hata:", str(ex)[:60], flush=True)
+    # 2. yol: jina reader sarmalı — kendi IP'sinden çeker, yanıtta 'Markdown Content:' sonrası JSON
+    try:
+        sorgu = tam + ("&" if "?" in tam else "?") + "&".join(
+            f"{k}={requests.utils.quote(str(v), safe='')}" for k, v in params.items())
+        r2 = requests.get("https://r.jina.ai/" + sorgu,
+                          headers={"User-Agent": UA["User-Agent"]}, timeout=35)
+        if r2.status_code == 200:
+            metin = r2.text
+            idx = metin.find("{")
+            if idx >= 0:
+                veri, _ = json.JSONDecoder().raw_decode(metin[idx:])
+                print("[tikwm] jina yoluyla cozuldu ✓", flush=True)
+                return veri
+    except Exception as ex:
+        print("[tikwm] jina hata:", str(ex)[:60], flush=True)
+    return None
 
 
 def tt_coz(url):
