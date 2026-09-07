@@ -5,8 +5,8 @@
    "youtube"
   ],
   "olusturma": "2026-08-30 08:50",
-  "kullanim": 39,
-  "son_kullanim": "2026-08-31 02:58"
+  "kullanim": 41,
+  "son_kullanim": "2026-09-07 09:42"
  },
  "sk-71c69f4de1f4b912957fed45": {
   "isim": "savio",
@@ -14,6 +14,15 @@
    "youtube"
   ],
   "olusturma": "2026-08-31 01:54",
+  "kullanim": 0,
+  "son_kullanim": null
+ },
+ "sk-1ce7aec5ab3305155826f3e4": {
+  "isim": "Deploy Sonrasi Test",
+  "saglayicilar": [
+   "tumu"
+  ],
+  "olusturma": "2026-09-07 09:43",
   "kullanim": 0,
   "son_kullanim": null
  }
