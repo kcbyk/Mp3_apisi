@@ -832,17 +832,21 @@ def _tt_get(yol, **params):
 
 
 def tt_coz(url):
-    """TikTok linkini cozer: tikwm (ana) -> yt-dlp (yedek).
+    """TikTok linkini cozer: tikwm (ana) -> yt-dlp (yedek). Kisa araliklarla 3 deneme
+    (jina rate-limit pencereleri / tikwm CF gecisleri aralikli oldugu icin).
     Dönen: {baslik, kanal, sure, boyut, video_url (watermark'siz mp4), muzik_url (mp3), kapak}"""
-    d = _tt_get("", url=url)
-    v = (d or {}).get("data") if (d or {}).get("code") == 0 else None
-    if v and v.get("play"):
-        return {"baslik": (v.get("title") or "TikTok").strip()[:120],
-                "kanal": "@" + str((v.get("author") or {}).get("unique_id") or "tiktok"),
-                "sure": int(v.get("duration") or 0),
-                "boyut": int(v.get("size") or 0),
-                "video_url": v.get("play"), "muzik_url": v.get("music") or "",
-                "kapak": v.get("cover") or ""}
+    for deneme in range(3):
+        d = _tt_get("", url=url)
+        v = (d or {}).get("data") if (d or {}).get("code") == 0 else None
+        if v and v.get("play"):
+            return {"baslik": (v.get("title") or "TikTok").strip()[:120],
+                    "kanal": "@" + str((v.get("author") or {}).get("unique_id") or "tiktok"),
+                    "sure": int(v.get("duration") or 0),
+                    "boyut": int(v.get("size") or 0),
+                    "video_url": v.get("play"), "muzik_url": v.get("music") or "",
+                    "kapak": v.get("cover") or ""}
+        if deneme < 2:
+            time.sleep(1.2)
     # yedek: yt-dlp
     try:
         import yt_dlp
