@@ -46,10 +46,10 @@ BASE = Path(__file__).resolve().parent
 KEYF = BASE / "api_key.txt"
 API_KEY = (os.environ.get("API_KEY") or (KEYF.read_text().strip() if KEYF.exists() else "")).strip()
 
-SAGLAYICILAR = ["youtube", "soundcloud", "archive"]
-IC_KOD = {"youtube": "yt", "soundcloud": "sc", "archive": "ia"}
-DI_KOD = {"yt": "youtube", "sc": "soundcloud", "ia": "archive"}
-DI_AD = {"yt": "youtube", "sc": "soundcloud", "ia": "archive.org"}
+SAGLAYICILAR = ["youtube", "soundcloud", "archive", "tiktok"]
+IC_KOD = {"youtube": "yt", "soundcloud": "sc", "archive": "ia", "tiktok": "tt"}
+DI_KOD = {"yt": "youtube", "sc": "soundcloud", "ia": "archive", "tt": "tiktok"}
+DI_AD = {"yt": "youtube", "sc": "soundcloud", "ia": "archive.org", "tt": "tiktok"}
 
 
 # ============================ KEY DEPOSU ============================
@@ -85,6 +85,18 @@ class KeyDeposu:
                     self._sha = d.get("sha")
                     print(f"[keys] GitHub'dan {len(self.anahtarlar)} key yüklendi", flush=True)
                     return
+                if r.status_code == 401:
+                    try:  # token ölmüşse: repo public → anonim OKUMA (salt-okunur, yazma yok)
+                        r2 = _rq.get(f"https://api.github.com/repos/{self.repo}/contents/keys.json",
+                                     params={"ref": self.dal}, timeout=15)
+                        if r2.status_code == 200:
+                            d2 = r2.json()
+                            self.anahtarlar = json.loads(base64.b64decode(d2["content"]).decode())
+                            self._sha = d2.get("sha")
+                            print(f"[keys] token ölü — anonim okundu: {len(self.anahtarlar)} key (yazma kapalı)", flush=True)
+                            return
+                    except Exception:
+                        pass
                 print(f"[keys] GitHub'da keys.json yok (kod {r.status_code}) — ilk kayıtta oluşacak", flush=True)
             except Exception as ex:
                 print("[keys] GitHub yükleme hatası:", str(ex)[:120], flush=True)
@@ -272,7 +284,7 @@ def _admin_kontrol():
 
 @app.get("/api/v1/health")
 def health():
-    return jsonify(ok=True, servis="sarki-api", surum="4.1",
+    return jsonify(ok=True, servis="sarki-api", surum="4.6",
                    ffmpeg=api_core.ffmpeg_var(),
                    zaman=time.strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -285,6 +297,7 @@ def search():
     if not q:
         return _hata("q parametresi gerekli", 400)
     izin = {ic for ic, dis in DI_KOD.items() if dis in g.izin}
+    izin.discard("tt")  # TikTok anahtar kelime ile aranamaz — yalnız url ile çalışır
     try:
         sonuc = api_core.ara(q, max(1, min(limit, 30)), kaynaklar=izin)
     except Exception as ex:
@@ -303,6 +316,11 @@ def search():
         "ia_id": s.get("ia_id"),
     } for i, s in enumerate(sonuc)],
         onbellek=getattr(api_core, "cache_vurdu", False))
+
+
+def _tt_mu(args, govde):
+    url = args.get("url") or (govde or {}).get("url") or ""
+    return "tiktok.com" in url
 
 
 def _kalite_al(args, govde, fmt="mp3"):
@@ -328,9 +346,10 @@ def instant():
         return _hata("q parametresi gerekli", 400)
     if fmt is None:
         return _hata("format mp3 veya mp4 olabilir", 400)
-    if kalite is None:
+    if kalite is None and not _tt_mu(request.args, None):
         return _hata("kalite, mp3'te 128/192/320; mp4'te 360/480/720/1080 olabilir", 400)
     izin = {ic for ic, dis in DI_KOD.items() if dis in g.izin}
+    izin.discard("tt")  # TikTok anahtar kelime ile aranamaz — yalnız url ile çalışır
     sonuc = api_core.ara(q, 10, kaynaklar=izin)
     if fmt == "mp4":  # video yalniz YouTube'dan olur
         sonuc = [s for s in sonuc if s.get("kaynak") == "yt"]
@@ -358,20 +377,22 @@ def convert():
     kalite = _kalite_al(request.args, d, fmt)
     if fmt is None:
         return _hata("format mp3 veya mp4 olabilir", 400)
-    if kalite is None:
+    if kalite is None and not _tt_mu(request.args, d):
         return _hata("kalite, mp3'te 128/192/320; mp4'te 360/480/720/1080 olabilir", 400)
     url = d.get("url") or request.args.get("url")
     if not url:
         return _hata("url gerekli", 400)
     gelen = (d.get("kaynak") or "").lower()
-    ic = {"youtube": "yt", "soundcloud": "sc", "archive": "ia",
-          "archive.org": "ia", "yt": "yt", "sc": "sc", "ia": "ia"}.get(gelen)
+    ic = {"youtube": "yt", "soundcloud": "sc", "archive": "ia", "tiktok": "tt",
+          "archive.org": "ia", "yt": "yt", "sc": "sc", "ia": "ia", "tt": "tt"}.get(gelen)
     if not ic:
-        ic = "yt" if "youtube" in url else ("ia" if "archive.org" in url else "sc")
+        ic = ("tt" if "tiktok.com" in url else
+              ("yt" if "youtube" in url or "youtu.be" in url else
+               ("ia" if "archive.org" in url else "sc")))
     if DI_KOD.get(ic) not in g.izin:
         return _hata(f"Bu key '{DI_KOD[ic]}' sağlayıcısına izinli değil", 403)
-    if fmt == "mp4" and ic != "yt":
-        return _hata("Video (mp4) indirme yalnız YouTube linklerinde çalışır", 400)
+    if fmt == "mp4" and ic not in ("yt", "tt"):
+        return _hata("Video (mp4) indirme yalnız YouTube/TikTok linklerinde çalışır", 400)
     item = {"kaynak": ic, "url": url, "baslik": d.get("baslik") or "sarki",
             "ia_id": d.get("ia_id") or (url.rstrip("/").split("/")[-1] if "archive.org" in url else None),
             "sure": d.get("sure", 0), "sc_prog_url": d.get("sc_prog_url"),
@@ -385,11 +406,13 @@ def _oynatma_sec(args, fmt):
     url = args.get("url")
     izin = {ic for ic, dis in DI_KOD.items() if dis in g.izin}
     if url:
-        ic = "yt" if "youtube" in url else ("ia" if "archive.org" in url else "sc")
+        ic = ("tt" if "tiktok.com" in url else
+              ("yt" if "youtube" in url or "youtu.be" in url else
+               ("ia" if "archive.org" in url else "sc")))
         if DI_KOD.get(ic) not in g.izin:
             return None, _hata(f"Bu key '{DI_KOD[ic]}' sağlayıcısına izinli değil", 403)
-        if fmt == "mp4" and ic != "yt":
-            return None, _hata("Video oynatma yalnız YouTube linklerinde çalışır", 400)
+        if fmt == "mp4" and ic not in ("yt", "tt"):
+            return None, _hata("Video oynatma yalnız YouTube/TikTok linklerinde çalışır", 400)
         return {"kaynak": ic, "url": url, "baslik": args.get("baslik") or "sarki",
                 "ia_id": url.rstrip("/").split("/")[-1] if ic == "ia" else None,
                 "sc_prog_url": args.get("sc_prog_url")}, None
@@ -413,11 +436,13 @@ def link_ep():
     kalite = _kalite_al(request.args, None, fmt)
     if fmt is None:
         return _hata("format mp3 veya mp4 olabilir", 400)
-    if kalite is None:
+    if kalite is None and not _tt_mu(request.args, None):
         return _hata("kalite, mp3'te 128/192/320; mp4'te 360/480/720/1080 olabilir", 400)
     item, h = _oynatma_sec(request.args, fmt)
     if h:
         return h
+    if item.get("kaynak") == "tt":
+        kalite = "kaynak"
     t0 = time.time()
     direct, hata = api_core.link_coz_cached(item, fmt, kalite)
     if not direct:
@@ -437,11 +462,13 @@ def stream_ep():
     kalite = _kalite_al(request.args, None, fmt)
     if fmt is None:
         return _hata("format mp3 veya mp4 olabilir", 400)
-    if kalite is None:
+    if kalite is None and not _tt_mu(request.args, None):
         return _hata("kalite, mp3'te 128/192/320; mp4'te 360/480/720/1080 olabilir", 400)
     item, h = _oynatma_sec(request.args, fmt)
     if h:
         return h
+    if item.get("kaynak") == "tt":
+        kalite = "kaynak"
     direct, hata = api_core.link_coz_cached(item, fmt, kalite)
     if not direct:
         return _hata(hata or "link çözülemedi", 502)
@@ -583,7 +610,7 @@ input:focus{border-color:#7c5cff}
 .keyTarih{color:#5d6784;font-size:12px;margin-left:8px}
 .keyKey{font-family:monospace;font-size:13px;color:#00d4ff;margin:8px 0;word-break:break-all;cursor:pointer}
 .rozet{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:2px 8px;margin-right:4px;background:#1c2438;color:#a9b4cc}
-.rozet.yt{background:#3b1212;color:#f87171}.rozet.sc{background:#3b2a12;color:#fb923c}.rozet.ia{background:#122d3b;color:#38bdf8}.rozet.tm{background:#231b3b;color:#a78bfa}
+.rozet.yt{background:#3b1212;color:#f87171}.rozet.sc{background:#3b2a12;color:#fb923c}.rozet.ia{background:#122d3b;color:#38bdf8}.rozet.tt{background:#20242e;color:#25f4ee}.rozet.tm{background:#231b3b;color:#a78bfa}
 .sil{float:right;background:none;border:none;color:#5d6784;font-size:16px;cursor:pointer}
 .sil:hover{color:#f87171}
 details{background:#131a2b;border:1px solid #26304d;border-radius:12px;padding:14px 18px;margin-bottom:16px}
@@ -644,6 +671,7 @@ footer a{color:#5d6784}
       <div class="cip" data-s="youtube" onclick="cip('youtube')">▶️ YouTube</div>
       <div class="cip" data-s="soundcloud" onclick="cip('soundcloud')">☁️ SoundCloud</div>
       <div class="cip" data-s="archive" onclick="cip('archive')">📼 Archive.org</div>
+      <div class="cip" data-s="tiktok" onclick="cip('tiktok')">🎵 TikTok</div>
     </div>
     <div class="etiket" id="parolaEtiket" style="display:none">Yönetici şifresi</div>
     <input type="password" id="yParola" style="display:none" placeholder="••••••••">
@@ -726,7 +754,7 @@ async function olustur(){
   ornekYaz();listeYukle();
 }
 function rozet(s){
-  const m={tumu:['tm','✨ Tümü'],youtube:['yt','▶️ YouTube'],soundcloud:['sc','☁️ SoundCloud'],archive:['ia','📼 Archive']};
+  const m={tumu:['tm','✨ Tümü'],youtube:['yt','▶️ YouTube'],soundcloud:['sc','☁️ SoundCloud'],archive:['ia','📼 Archive'],tiktok:['tt','🎵 TikTok']};
   const[c,a]=m[s]||['','?'];return '<span class="rozet '+c+'">'+a+'</span>';
 }
 async function listeYukle(){
@@ -862,7 +890,7 @@ const aktif = satirlar.filter(s => s.t <= player.currentTime).length - 1;</pre>
 
 <div class="kart">
 <span class="yol">GET /api/v1/link?q={sorgu}&format=mp3</span> <span class="yol">GET /api/v1/stream?q={sorgu}</span><span class="etiket get">GET</span>
-<p class="acik"><b>İndirmeden oynatma!</b> Şarkıyı/videoyu sunucuya indirmez — <b>direkt CDN linkini</b> verir: <code>link</code> JSON döner, <code>stream</code> 302 yönlendirir (oynatıcıya koy, çalsın). SoundCloud ~1 sn, YouTube 3-10 sn (dönüşüm), Archive anında. Disk kullanılmaz.</p>
+<p class="acik"><b>İndirmeden oynatma! TikTok dahil:</b> Şarkıyı/videoyu sunucuya indirmez — <b>direkt CDN linkini</b> verir: <code>link</code> JSON döner, <code>stream</code> 302 yönlendirir (oynatıcıya koy, çalsın). SoundCloud ~1 sn, YouTube 3-10 sn (dönüşüm), Archive anında. Disk kullanılmaz.</p>
 <pre>&lt;audio src="https://SUNUCU/api/v1/stream?q=tarkan kuzu kuzu&key=sk-..."&gt;&lt;/audio&gt;
 &lt;video src="https://SUNUCU/api/v1/stream?q=klip adı&format=mp4&kalite=720&key=sk-..."&gt;&lt;/video&gt;
 

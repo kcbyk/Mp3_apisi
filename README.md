@@ -40,7 +40,7 @@ Ayar env'leri (opsiyel): `SARKI_CACHE_TTL`, `SARKI_DOSYA_OMUR`, `SARKI_TESLIM_GE
 | GET | `/dokuman` | Detaylı dokümantasyon |
 | GET | `/api/v1/health` | Servis sağlığı |
 | GET | `/api/v1/search?q=...&key=` | 3 kaynakta paralel arama (~1 sn, varsayılan 20 / max 30 sonuç) |
-| GET | `/api/v1/link?q=...&format=mp3\|mp4&key=` | **İndirmeden oynatma:** direkt CDN linki (JSON) — sunucu diske yazmaz |
+| GET | `/api/v1/link?url=...&format=mp3\|mp4&key=` | **İndirmeden oynatma:** direkt CDN linki (JSON) — YouTube/SC/IA/**TikTok (watermark'sız)** |
 | GET | `/api/v1/stream?q=...&key=` | **İndirmeden oynatma:** 302 → direkt link; `<audio>/<video src>` ile çalar |
 | GET | `/api/v1/sozler?q=...&sanatci=...&key=` | Şarkı sözleri: düz + **senkron** (satır başına saniye — Spotify tarzı canlı söz) |
 | GET | `/api/v1/instant?q=...&key=` | Ara + en iyi sonucu otomatik indir (tek çağrı) |

@@ -790,6 +790,103 @@ def sozler_bul(sarki, sanatci="", sure_hedef=0):
     return y or d
 
 
+# ------------------- TIKTOK MOTORU (tikwm + yt-dlp yedek) -------------------
+_tt_hz_kilit = __import__("threading").Lock()
+_tt_son_cagri = [0.0]
+
+
+def _tt_get(yol, **params):
+    """tikwm API cagrisi — 1 istek/sn limitine saygili + UA. JSON döner (hata: None)."""
+    import time as _t
+    UA = {"User-Agent": ARA_HTTP["User-Agent"], "Referer": "https://www.tikwm.com/",
+          "Accept": "application/json"}
+    with _tt_hz_kilit:
+        gecen = _t.time() - _tt_son_cagri[0]
+        if gecen < 1.15:
+            _t.sleep(1.15 - gecen)
+        _tt_son_cagri[0] = _t.time()
+    try:
+        r = requests.get(f"https://www.tikwm.com/api/{yol}", params=params,
+                         headers=UA, timeout=25)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception as ex:
+        print("[tikwm] hata:", str(ex)[:70], flush=True)
+        return None
+
+
+def tt_coz(url):
+    """TikTok linkini cozer: tikwm (ana) -> yt-dlp (yedek).
+    Dönen: {baslik, kanal, sure, boyut, video_url (watermark'siz mp4), muzik_url (mp3), kapak}"""
+    d = _tt_get("", url=url)
+    v = (d or {}).get("data") if (d or {}).get("code") == 0 else None
+    if v and v.get("play"):
+        return {"baslik": (v.get("title") or "TikTok").strip()[:120],
+                "kanal": "@" + str((v.get("author") or {}).get("unique_id") or "tiktok"),
+                "sure": int(v.get("duration") or 0),
+                "boyut": int(v.get("size") or 0),
+                "video_url": v.get("play"), "muzik_url": v.get("music") or "",
+                "kapak": v.get("cover") or ""}
+    # yedek: yt-dlp
+    try:
+        import yt_dlp
+        opts = {"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 20}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            i = ydl.extract_info(url, download=False)
+        fmt = next((f for f in reversed(i.get("formats") or [])
+                    if f.get("ext") == "mp4" and f.get("url")), None)
+        if fmt:
+            return {"baslik": (i.get("title") or "TikTok")[:120],
+                    "kanal": "@" + (i.get("uploader") or "tiktok"),
+                    "sure": int(i.get("duration") or 0), "boyut": int(fmt.get("filesize") or 0),
+                    "video_url": fmt["url"], "muzik_url": "", "kapak": i.get("thumbnail") or ""}
+    except Exception as ex:
+        print("[tt] yt-dlp yedek de olmadi:", str(ex)[:80], flush=True)
+    return None
+
+
+def tt_indir(url, baslik, ilerleme=None, ses=False, max_mb=150):
+    """TikTok video (mp4, watermark'siz) veya sarkisi (mp3) indirir. (dosya, hata)"""
+    bilgi = tt_coz(url)
+    if not bilgi:
+        return None, "TikTok linki çözülemedi (motorlar meşgul olabilir)"
+    dl = bilgi["muzik_url"] if ses else bilgi["video_url"]
+    if not dl:
+        return None, "Bu içerik için medya linki yok"
+    if ilerleme:
+        ilerleme(60, "⏬ TikTok CDN'inden iniyor...")
+    uzanti = "mp3" if ses else "mp4"
+    base = temizle_ad(baslik or bilgi["baslik"])
+    fname, i = f"{base}.{uzanti}", 1
+    while (MUZIK / fname).exists():
+        i += 1
+        fname = f"{base} ({i}).{uzanti}"
+    try:
+        with requests.get(dl, headers=ARA_HTTP, timeout=(15, 90), stream=True) as rr:
+            rr.raise_for_status()
+            tot = int(rr.headers.get("content-length") or bilgi.get("boyut") or 0)
+            done, t0 = 0, time.time()
+            with open(MUZIK / fname, "wb") as fh:
+                for ch in rr.iter_content(65536):
+                    fh.write(ch)
+                    done += len(ch)
+                    if done > max_mb * 1024 * 1024:
+                        raise RuntimeError(f"Dosya {max_mb}MB'ı aştı.")
+                    if ilerleme and tot:
+                        ilerleme(60 + int(done / tot * 38),
+                                 f"⏬ {done/1048576:.1f}/{tot/1048576:.1f} MB • {int(time.time()-t0)} sn")
+    except Exception as ex:
+        try:
+            (MUZIK / fname).unlink()
+        except Exception:
+            pass
+        return None, f"TikTok indirme hatası: {str(ex)[:80]}"
+    kayit_ekle(fname, bilgi["baslik"], "TikTok (video)" if not ses else "TikTok (ses)",
+               url, bilgi["sure"])
+    return fname, None
+
+
 def sc_prog_url_bul(track_url):
     """SoundCloud parca URL'sinden progressive transcoding url'sini cozer (resolve API)."""
     cid = sc_client_id()

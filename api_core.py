@@ -126,6 +126,12 @@ def link_coz(item, fmt="mp3", kalite="320"):
         prog = item.get("sc_prog_url") or core.sc_prog_url_bul(item.get("url"))
         u = core.sc_direct_url(prog)
         return (u, None) if u else (None, "SoundCloud linki alınamadı (bu parça HLS olabilir — convert ile indir)")
+    if k == "tt":
+        bilgi = core.tt_coz(item["url"])
+        if not bilgi:
+            return None, "TikTok linki çözülemedi"
+        u = bilgi.get("muzik_url") if fmt == "mp3" else bilgi.get("video_url")
+        return (u, None) if u else (None, "Bu TikTok içeriğinde medya linki yok")
     if k == "ia":
         u = core.archive_direct_url(item.get("ia_id"), item.get("baslik", ""))
         return (u, None) if u else (None, "Arşiv linki alınamadı")
@@ -219,7 +225,10 @@ def job_baslat(item, sorgu=""):
         t0 = time.time()
         try:
             kaynak = item.get("kaynak")
-            if kaynak == "yt" and item.get("format") == "mp4":
+            if kaynak == "tt":
+                dosya, hata = core.tt_indir(item["url"], item.get("baslik") or "tiktok",
+                                            iler, ses=(item.get("format") == "mp3"))
+            elif kaynak == "yt" and item.get("format") == "mp4":
                 dosya, hata = core.yt_video_indir(item["url"], item["baslik"], iler,
                                                   sure=item.get("sure", 0),
                                                   kalite=str(item.get("kalite", "720")))
