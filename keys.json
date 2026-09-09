@@ -5,8 +5,8 @@
    "youtube"
   ],
   "olusturma": "2026-08-30 08:50",
-  "kullanim": 45,
-  "son_kullanim": "2026-09-09 02:20"
+  "kullanim": 51,
+  "son_kullanim": "2026-09-09 02:53"
  },
  "sk-71c69f4de1f4b912957fed45": {
   "isim": "savio",
@@ -32,6 +32,15 @@
    "web"
   ],
   "olusturma": "2026-09-09 02:21",
+  "kullanim": 1,
+  "son_kullanim": "2026-09-09 02:51"
+ },
+ "sk-7f0c736b9174448dea07eca0": {
+  "isim": "Kapak Yetki",
+  "saglayicilar": [
+   "web"
+  ],
+  "olusturma": "2026-09-09 02:53",
   "kullanim": 0,
   "son_kullanim": null
  }
