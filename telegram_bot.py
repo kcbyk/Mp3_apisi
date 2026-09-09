@@ -921,39 +921,39 @@ def web_ara(q, limit=10):
         if kayit and _t.time() - kayit[0] < 600:
             return kayit[1]
     sonuc, motor = [], ""
-    # 1) ddgs kutuphanesi (DuckDuckGo)
+    # 1) DDG lite HTML (tek basit POST — zayif CPU'da en hizlisi)
     try:
-        from ddgs import DDGS
-        for x in DDGS().text(q, max_results=limit):
-            u = x.get("href") or x.get("url") or ""
-            if u:
-                sonuc.append({"baslik": (x.get("title") or "").strip()[:150],
-                              "url": u,
-                              "ozet": (x.get("body") or x.get("excerpt") or "").strip()[:300]})
-        motor = "duckduckgo"
+        r = requests.post("https://lite.duckduckgo.com/lite/", data={"q": q},
+                          headers=ARA_HTTP, timeout=20)
+        linkler = [(u, re.sub("<[^>]+>", "", t).strip())
+                   for u, t in re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', r.text)]
+        snip = [re.sub(r"\s+", " ", re.sub("<[^>]+>", "", s)).strip()
+                for s in re.findall(r'class="result-snippet"[^>]*>(.*?)</td>', r.text, re.S)]
+        gorulen = set()
+        for i, (u, t) in enumerate(linkler):
+            if "duckduckgo.com" in u or u in gorulen or not t:
+                continue
+            gorulen.add(u)
+            sonuc.append({"baslik": t[:150], "url": u,
+                          "ozet": (snip[i] if i < len(snip) else "")[:300]})
+            if len(sonuc) >= limit:
+                break
+        motor = "duckduckgo-lite"
     except Exception as ex:
-        print("[web] ddgs hata:", str(ex)[:70], flush=True)
-    # 2) DDG lite HTML (ayni motor, farkli yuzey)
+        print("[web] lite hata:", str(ex)[:70], flush=True)
+    # 2) ddgs kutuphanesi (daha zengin sonuclar; lite tikanirsa)
     if not sonuc:
         try:
-            r = requests.post("https://lite.duckduckgo.com/lite/", data={"q": q},
-                              headers=ARA_HTTP, timeout=20)
-            linkler = [(u, re.sub("<[^>]+>", "", t).strip())
-                       for u, t in re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', r.text)]
-            snip = [re.sub(r"\s+", " ", re.sub("<[^>]+>", "", s)).strip()
-                    for s in re.findall(r'class="result-snippet"[^>]*>(.*?)</td>', r.text, re.S)]
-            gorulen = set()
-            for i, (u, t) in enumerate(linkler):
-                if "duckduckgo.com" in u or u in gorulen or not t:
-                    continue
-                gorulen.add(u)
-                sonuc.append({"baslik": t[:150], "url": u,
-                              "ozet": (snip[i] if i < len(snip) else "")[:300]})
-                if len(sonuc) >= limit:
-                    break
-            motor = "duckduckgo-lite"
+            from ddgs import DDGS
+            for x in DDGS().text(q, max_results=limit):
+                u = x.get("href") or x.get("url") or ""
+                if u:
+                    sonuc.append({"baslik": (x.get("title") or "").strip()[:150],
+                                  "url": u,
+                                  "ozet": (x.get("body") or x.get("excerpt") or "").strip()[:300]})
+            motor = "duckduckgo"
         except Exception as ex:
-            print("[web] lite hata:", str(ex)[:70], flush=True)
+            print("[web] ddgs hata:", str(ex)[:70], flush=True)
     # 3) Wikipedia (son cikis)
     if not sonuc:
         try:
