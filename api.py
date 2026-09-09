@@ -284,7 +284,7 @@ def _admin_kontrol():
 
 @app.get("/api/v1/health")
 def health():
-    return jsonify(ok=True, servis="sarki-api", surum="4.8.3",
+    return jsonify(ok=True, servis="sarki-api", surum="4.8.4",
                    ffmpeg=api_core.ffmpeg_var(),
                    zaman=time.strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -299,6 +299,8 @@ def search():
     izin = {ic for ic, dis in DI_KOD.items() if dis in g.izin}
     izin.discard("tt")  # TikTok anahtar kelime ile aranamaz — yalnız url ile çalışır
     izin.discard("web")  # web /web ucundadir, muzik aramasinin motoru degildir
+    if not izin:
+        return _hata("Bu key müzik araması için hiçbir sağlayıcıya izinli değil (yalnız 'web' erişimi var)", 403)
     try:
         sonuc = api_core.ara(q, max(1, min(limit, 30)), kaynaklar=izin)
     except Exception as ex:
