@@ -912,13 +912,19 @@ _web_kilit = __import__("threading").Lock()
 
 
 def _web_sagliq(q, sonuc):
-    """Sonuclar sorguyla alakali mi? (datacenter IP'lere servis edilen cop/reklam sayfalarini eler)"""
-    kelimeler = {w for w in re.split(r"\W+", q.lower()) if len(w) > 2}
+    """Sonuclar sorguyla alakali mi? (datacenter IP'lere servis edilen cop/reklam sayfalarini eler)
+    Kural: sorgudaki anlamlı kelimelerden en az 2'si (tek kelimelik sorguda 1'i)
+    ilk 3 sonucun başlık/URL'sinde geçmeli. Soru/stop kelimeleri sayilmaz."""
+    STOP = {"mi", "mı", "mu", "mü", "ne", "bir", "ve", "ile", "için", "olan", "var",
+            "hangi", "neden", "nasıl", "kadar", "çok", "en", "kaç", "kim", "kimdir",
+            "nedir", "demek", "anlama", "gelir", "mi", "the", "com"}
+    kelimeler = {w for w in re.split(r"\W+", q.lower()) if len(w) > 2 and w not in STOP}
     if not kelimeler:
         return True
     for s in sonuc[:3]:
         metin = (s.get("baslik", "") + " " + s.get("url", "")).lower()
-        if any(w in metin for w in kelimeler):
+        eslesen = sum(1 for w in kelimeler if w in metin)
+        if eslesen >= (1 if len(kelimeler) == 1 else 2):
             return True
     return False
 
