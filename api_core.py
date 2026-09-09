@@ -114,6 +114,11 @@ def sozler(q, sanatci="", sure=0):
 
 # ------------------- INDIRMEDEN OYNATMA (direct link) -------------------
 
+def oku(url, max_karakter=6000):
+    """Sayfa okuma (jina reader) — motor telegram_bot.oku. Dönen: (veri, hata)."""
+    return core.oku(url, max_karakter)
+
+
 def web_ara(q, limit=10):
     """Genel web arama (Google-CSE tarzi) — motor telegram_bot.web_ara.
     Dönen: (sonuclar, motor_adi)."""

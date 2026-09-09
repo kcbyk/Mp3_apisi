@@ -1033,6 +1033,33 @@ def web_ara(q, limit=10):
     return sonuc, motor
 
 
+def oku(url, max_karakter=6000):
+    """Sayfayi okuyup LLM'e hazır temiz metni dondurur (jina reader — kendi IP'siyle
+    ceker, datacenter dostu). Dönen: (veri, hata); veri={baslik, metin, karakter, kirpildi}"""
+    try:
+        r = requests.get("https://r.jina.ai/" + url,
+                         headers={"User-Agent": ARA_HTTP["User-Agent"]}, timeout=40)
+        if r.status_code != 200:
+            return None, f"sayfa okunamadı (HTTP {r.status_code})"
+        metin = r.text.strip()
+        baslik = ""
+        if metin.startswith("Title:"):
+            satir, _, kalan = metin.partition("\n")
+            baslik = satir[7:].strip()
+            metin = kalan
+        metin = re.sub(r"^URL Source:.*$", "", metin, flags=re.M)
+        metin = re.sub(r"^Markdown Content:\s*$", "", metin, flags=re.M)
+        metin = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", metin)          # görselleri at
+        metin = re.sub(r"\[([^\]]*)\]\([^)]+\)", r"\1", metin)      # linkler -> düz metin
+        metin = re.sub(r"\n{3,}", "\n\n", metin).strip()
+        if not metin or len(metin) < 200 or "requiring CAPTCHA" in metin:
+            return None, "sayfa metni alınamadı (CAPTCHA/boş/JS ağırlıklı sayfa)"
+        return {"baslik": baslik, "metin": metin[:max_karakter],
+                "karakter": len(metin), "kirpildi": len(metin) > max_karakter}, None
+    except Exception as ex:
+        return None, f"okuma hatası: {str(ex)[:80]}"
+
+
 def sc_prog_url_bul(track_url):
     """SoundCloud parca URL'sinden progressive transcoding url'sini cozer (resolve API)."""
     cid = sc_client_id()

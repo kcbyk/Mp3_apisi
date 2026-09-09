@@ -284,7 +284,7 @@ def _admin_kontrol():
 
 @app.get("/api/v1/health")
 def health():
-    return jsonify(ok=True, servis="sarki-api", surum="4.7.2",
+    return jsonify(ok=True, servis="sarki-api", surum="4.8",
                    ffmpeg=api_core.ffmpeg_var(),
                    zaman=time.strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -513,11 +513,57 @@ def web_ep():
         return _hata("q parametresi gerekli", 400)
     if "web" not in g.izin:
         return _hata("Bu key 'web' sağlayıcısına izinli değil", 403)
+    detay = str(request.args.get("detay") or "").lower() in ("1", "true", "evet")
     t0 = time.time()
     sonuc, motor = api_core.web_ara(q, max(1, min(limit, 20)))
-    return jsonify(ok=True, q=q, adet=len(sonuc), motor=motor or "yok",
+    if detay and sonuc:
+        # RAG modu: ilk 3 sonucu paralel oku (jina) -> metin alanini doldur
+        kutular = {}
+
+        def _cek(i, s):
+            veri, h = api_core.oku(s["url"], 5000)
+            if veri:
+                kutular[i] = veri
+
+        isler = [threading.Thread(target=_cek, args=(i, s), daemon=True)
+                 for i, s in enumerate(sonuc[:3])]
+        for t in isler:
+            t.start()
+        for t in isler:
+            t.join(timeout=45)
+        for i, v in kutular.items():
+            sonuc[i]["metin"] = v["metin"]
+            sonuc[i]["metin_karakter"] = v["karakter"]
+            sonuc[i]["metin_kirpildi"] = v["kirpildi"]
+    return jsonify(ok=True, q=q, adet=len(sonuc), motor=motor or "yok", detay=detay,
                    sure_sn=round(time.time() - t0, 2), sonuclar=sonuc,
-                   not_="DuckDuckGo operatörleri desteklenir: site:, filetype:, intitle:, -hariç")
+                   not_="DuckDuckGo operatörleri desteklenir: site:, filetype:, intitle:, -hariç"
+                         + (" — detay=1: ilk 3 sonucun sayfa metni dahil (RAG paketi)"
+                            if detay else ""))
+
+
+@app.get("/api/v1/oku")
+@korumali
+def oku_ep():
+    """Sayfayı oku → LLM'e hazır temiz metin (RAG/özetleme için)."""
+    url = (request.args.get("url") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return _hata("url parametresi gerekli (http/https)", 400)
+    if "web" not in g.izin:
+        return _hata("Bu key 'web' sağlayıcısına izinli değil", 403)
+    try:
+        maks = int(request.args.get("karakter") or 6000)
+    except ValueError:
+        maks = 6000
+    maks = max(500, min(maks, 20000))
+    t0 = time.time()
+    veri, hata = api_core.oku(url, maks)
+    if hata:
+        return _hata(hata, 502)
+    return jsonify(ok=True, url=url, baslik=veri["baslik"], karakter=veri["karakter"],
+                   kirpildi=veri["kirpildi"], sure_sn=round(time.time() - t0, 2),
+                   metin=veri["metin"],
+                   not_="Bu metni LLM'e ver — cevabı o üretsin. karakter=500-20000 ayarlanabilir")
 
 
 @app.get("/api/v1/status/<jid>")
@@ -882,8 +928,14 @@ Key'in sadece seçtiğin sağlayıcılara erişir. Keyler GitHub'da kalıcı sak
 
 <div class="kart">
 <span class="yol">GET /api/v1/web?q={sorgu}&limit=10</span><span class="etiket get">GET</span>
-<p class="acik"><b>Genel web arama</b> (Google-CSE tarzı, anahtarsız ve ücretsiz): DuckDuckGo → lite HTML → Wikipedia zinciri. <code>site:</code>, <code>filetype:</code>, <code>intitle:</code> operatörleri desteklenir. "Tümü" keylerde açıktır.</p>
+<p class="acik"><b>Genel web arama</b> (Google-CSE tarzı, anahtarsız ve ücretsiz): DuckDuckGo → lite HTML → Wikipedia zinciri. <code>site:</code>, <code>filetype:</code>, <code>intitle:</code> operatörleri desteklenir. "Tümü" keylerde açıktır. <b><code>&detay=1</code> → RAG modu:</b> ilk 3 sonucun sayfa metni de döner (LLM'e hazır paket).</p>
 <pre>→ {"ok":true,"q":"...","adet":10,"motor":"duckduckgo","sonuclar":[{"baslik":"...","url":"https://...","ozet":"..."}]}</pre>
+</div>
+
+<div class="kart">
+<span class="yol">GET /api/v1/oku?url={sayfa}&karakter=6000</span><span class="etiket get">GET</span>
+<p class="acik"><b>Sayfa → temiz metin</b> (jina reader): verilen URL'yi okur, başlık + LLM'e hazır düz metin döner. Özetleme, içerik analizi, bot "bunu özetle" akışları için. <code>karakter</code>: 500-20000.</p>
+<pre>→ {"ok":true,"url":"...","baslik":"...","karakter":8421,"metin":"sayfanın metni..."}</pre>
 </div>
 
 <div class="kart">
