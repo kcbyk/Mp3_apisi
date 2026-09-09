@@ -911,9 +911,26 @@ _web_cache = {}
 _web_kilit = __import__("threading").Lock()
 
 
+def _web_sagliq(q, sonuc):
+    """Sonuclar sorguyla alakali mi? (datacenter IP'lere servis edilen cop/reklam sayfalarini eler)"""
+    kelimeler = {w for w in re.split(r"\W+", q.lower()) if len(w) > 2}
+    if not kelimeler:
+        return True
+    for s in sonuc[:3]:
+        metin = (s.get("baslik", "") + " " + s.get("url", "")).lower()
+        if any(w in metin for w in kelimeler):
+            return True
+    return False
+
+
 def web_ara(q, limit=10):
-    """Genel web aramasi — DuckDuckGo (ddgs kutuphanesi) -> DDG lite HTML -> Wikipedia.
-    Anahtarsiz ve ucretsiz. Dönen: (sonuclar, motor_adi); sonuclar: [{baslik, url, ozet}]"""
+    """Genel web aramasi — zincir:
+    1) DDG lite (tek POST, en hizli; datacenter IP'lerde challenge yiyebilir)
+    2) jina reader -> html.duckduckgo.com (jina kendi IP'sinden ceker: Render-dostu)
+    3) ddgs kutuphanesi (zengin sonuclar)
+    4) Wikipedia (son cikis)
+    Her asamada sagliq kontrolu: alakasiz cop gelirse elenir.
+    Dönen: (sonuclar, motor_adi); sonuclar: [{baslik, url, ozet}]"""
     import time as _t
     anahtar = (q.lower().strip(), limit)
     with _web_kilit:
@@ -921,7 +938,8 @@ def web_ara(q, limit=10):
         if kayit and _t.time() - kayit[0] < 600:
             return kayit[1]
     sonuc, motor = [], ""
-    # 1) DDG lite HTML (tek basit POST — zayif CPU'da en hizlisi)
+
+    # 1) DDG lite HTML (tek basit POST)
     try:
         r = requests.post("https://lite.duckduckgo.com/lite/", data={"q": q},
                           headers=ARA_HTTP, timeout=20)
@@ -929,32 +947,71 @@ def web_ara(q, limit=10):
                    for u, t in re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', r.text)]
         snip = [re.sub(r"\s+", " ", re.sub("<[^>]+>", "", s)).strip()
                 for s in re.findall(r'class="result-snippet"[^>]*>(.*?)</td>', r.text, re.S)]
-        gorulen = set()
+        aday, gorulen = [], set()
         for i, (u, t) in enumerate(linkler):
             if "duckduckgo.com" in u or u in gorulen or not t:
                 continue
             gorulen.add(u)
-            sonuc.append({"baslik": t[:150], "url": u,
-                          "ozet": (snip[i] if i < len(snip) else "")[:300]})
-            if len(sonuc) >= limit:
+            aday.append({"baslik": t[:150], "url": u,
+                         "ozet": (snip[i] if i < len(snip) else "")[:300]})
+            if len(aday) >= limit:
                 break
-        motor = "duckduckgo-lite"
+        if aday and _web_sagliq(q, aday):
+            sonuc, motor = aday, "duckduckgo-lite"
     except Exception as ex:
         print("[web] lite hata:", str(ex)[:70], flush=True)
-    # 2) ddgs kutuphanesi (daha zengin sonuclar; lite tikanirsa)
+
+    # 2) jina reader -> DDG html (datacenter IP'lerde guvenilir yol)
+    if not sonuc:
+        try:
+            hedef = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(q)
+            r = requests.get("https://r.jina.ai/" + hedef,
+                             headers={"User-Agent": ARA_HTTP["User-Agent"]}, timeout=35)
+            isaret = list(re.finditer(
+                r'\[([^\]\[]{5,140})\]\(https://duckduckgo\.com/l/\?uddg=([^)&]+)[^)]*\)', r.text))
+            kayitlar = {}
+            for i, m in enumerate(isaret):
+                baslik = m.group(1).strip()
+                u = urllib.parse.unquote(m.group(2))
+                if not u.startswith("http"):
+                    continue
+                sonraki = isaret[i + 1].start() if i + 1 < len(isaret) else len(r.text)
+                parca = r.text[m.end():sonraki]
+                parca = re.sub(r'\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)', '', parca)
+                parca = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', parca)
+                parca = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', parca)
+                parca = re.sub(r'[*#]+\s*', '', parca)
+                parca = re.sub(r'\s+', ' ', parca).strip(' -|')
+                if u in kayitlar:
+                    if parca and not kayitlar[u]["ozet"]:
+                        kayitlar[u]["ozet"] = parca[:300]
+                    if baslik.lower() not in u.lower():
+                        kayitlar[u]["baslik"] = baslik[:150]
+                else:
+                    kayitlar[u] = {"baslik": baslik[:150], "url": u, "ozet": parca[:300]}
+            aday = list(kayitlar.values())[:limit]
+            if aday and _web_sagliq(q, aday):
+                sonuc, motor = aday, "duckduckgo-jina"
+        except Exception as ex:
+            print("[web] jina hata:", str(ex)[:70], flush=True)
+
+    # 3) ddgs kutuphanesi
     if not sonuc:
         try:
             from ddgs import DDGS
+            aday = []
             for x in DDGS().text(q, max_results=limit):
                 u = x.get("href") or x.get("url") or ""
                 if u:
-                    sonuc.append({"baslik": (x.get("title") or "").strip()[:150],
-                                  "url": u,
-                                  "ozet": (x.get("body") or x.get("excerpt") or "").strip()[:300]})
-            motor = "duckduckgo"
+                    aday.append({"baslik": (x.get("title") or "").strip()[:150],
+                                 "url": u,
+                                 "ozet": (x.get("body") or x.get("excerpt") or "").strip()[:300]})
+            if aday and _web_sagliq(q, aday):
+                sonuc, motor = aday, "duckduckgo"
         except Exception as ex:
             print("[web] ddgs hata:", str(ex)[:70], flush=True)
-    # 3) Wikipedia (son cikis)
+
+    # 4) Wikipedia (son cikis)
     if not sonuc:
         try:
             r = requests.get("https://tr.wikipedia.org/w/api.php", params={
@@ -968,6 +1025,7 @@ def web_ara(q, limit=10):
             motor = "wikipedia"
         except Exception as ex:
             print("[web] wikipedia hata:", str(ex)[:70], flush=True)
+
     with _web_kilit:
         if len(_web_cache) > 60:
             _web_cache.clear()
