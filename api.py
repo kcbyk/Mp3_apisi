@@ -284,7 +284,7 @@ def _admin_kontrol():
 
 @app.get("/api/v1/health")
 def health():
-    return jsonify(ok=True, servis="sarki-api", surum="4.8.4",
+    return jsonify(ok=True, servis="sarki-api", surum="4.9",
                    ffmpeg=api_core.ffmpeg_var(),
                    zaman=time.strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -543,6 +543,21 @@ def web_ep():
                    not_="DuckDuckGo operatörleri desteklenir: site:, filetype:, intitle:, -hariç"
                          + (" — detay=1: ilk 3 sonucun sayfa metni dahil (RAG paketi)"
                             if detay else ""))
+
+
+@app.get("/api/v1/kapak")
+@korumali
+def kapak_ep():
+    """Album kapagi (Spotify kalitesi ve ustu) — iTunes→Deezer→CAA→YT zinciri."""
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return _hata("q parametresi gerekli", 400)
+    if not (g.izin & {"youtube", "soundcloud", "archive", "tiktok"}):
+        return _hata("Bu key 'kapak' için müzik sağlayıcılarına izinli değil", 403)
+    veri, hata = api_core.kapak_bul(q)
+    if hata:
+        return _hata(hata, 404)
+    return jsonify(ok=True, q=q, **veri)
 
 
 @app.get("/api/v1/oku")
@@ -935,6 +950,12 @@ Key'in sadece seçtiğin sağlayıcılara erişir. Keyler GitHub'da kalıcı sak
 <span class="yol">GET /api/v1/web?q={sorgu}&limit=10</span><span class="etiket get">GET</span>
 <p class="acik"><b>Genel web arama</b> (Google-CSE tarzı, anahtarsız ve ücretsiz): DuckDuckGo → lite HTML → Wikipedia zinciri. <code>site:</code>, <code>filetype:</code>, <code>intitle:</code> operatörleri desteklenir. "Tümü" keylerde açıktır. <b><code>&detay=1</code> → RAG modu:</b> ilk 3 sonucun sayfa metni de döner (LLM'e hazır paket).</p>
 <pre>→ {"ok":true,"q":"...","adet":10,"motor":"duckduckgo","sonuclar":[{"baslik":"...","url":"https://...","ozet":"..."}]}</pre>
+</div>
+
+<div class="kart">
+<span class="yol">GET /api/v1/kapak?q={şarkı}</span><span class="etiket get">GET</span>
+<p class="acik"><b>Albüm kapağı</b> (Spotify kalitesi ve üzeri): iTunes (1500px+) → Deezer (1000px) → Cover Art Archive (orijinal tarama) → YouTube karesi zinciri. Boyutlar indirilip doğrulanır.</p>
+<pre>→ {"ok":true,"kapak_url":"https://...","genislik":1500,"yukseklik":1500,"kaynak":"itunes","sanatci":"...","album":"..."}</pre>
 </div>
 
 <div class="kart">

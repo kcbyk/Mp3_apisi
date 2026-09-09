@@ -1078,6 +1078,157 @@ def oku(url, max_karakter=6000):
         return None, f"okuma hatası: {str(ex)[:80]}"
 
 
+# ------------------- KAPAK (ALBUM ART) MOTORU -------------------
+def _resim_boyut(data):
+    """JPEG/PNG gercek boyutunu baytlardan okur (PIL'siz)."""
+    import struct as _st
+    try:
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            w, h = _st.unpack(">II", data[16:24])
+            return int(w), int(h)
+        if data[:2] == b"\xff\xd8":  # JPEG: SOF isaretcisini ara
+            i = 2
+            while i < len(data) - 9:
+                if data[i] != 0xFF:
+                    i += 1
+                    continue
+                m = data[i + 1]
+                if m in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                         0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                    h, w = _st.unpack(">HH", data[i + 5:i + 9])
+                    return int(w), int(h)
+                if m == 0xD8 or m == 0x01 or 0xD0 <= m <= 0xD7:
+                    i += 2
+                    continue
+                i += 2 + _st.unpack(">H", data[i + 2:i + 4])[0]
+        return None
+    except Exception:
+        return None
+
+
+def _kapak_itunes(q):
+    try:
+        r = requests.get("https://itunes.apple.com/search",
+                         params={"term": q, "entity": "song", "limit": 1},
+                         headers=ARA_HTTP, timeout=15)
+        sonuc = (r.json().get("results") or [])
+        if not sonuc:
+            return None
+        s = sonuc[0]
+        u = (s.get("artworkUrl100") or "").replace("100x100bb", "3000x3000bb")
+        if not u:
+            return None
+        return {"url": u, "sanatci": s.get("artistName") or "",
+                "album": s.get("collectionName") or "", "baslik": s.get("trackName") or "",
+                "kaynak": "itunes", "not_": "orijinal cozunurluge kadar (1500px+)"}
+    except Exception as ex:
+        print("[kapak] itunes:", str(ex)[:60], flush=True)
+        return None
+
+
+def _kapak_deezer(q):
+    try:
+        hedef = "https://api.deezer.com/search?q=" + urllib.parse.quote(q) + "&limit=1"
+        r = requests.get("https://r.jina.ai/" + hedef,
+                         headers={"User-Agent": ARA_HTTP["User-Agent"]}, timeout=30)
+        idx = r.text.find("{")
+        if idx < 0:
+            return None
+        d, _ = json.JSONDecoder().raw_decode(r.text[idx:])
+        s = ((d.get("data") or [{}])[0])
+        alb = s.get("album") or {}
+        u = alb.get("cover_xl") or alb.get("cover_big")
+        if not u:
+            return None
+        return {"url": u, "sanatci": (s.get("artist") or {}).get("name") or "",
+                "album": alb.get("title") or "", "baslik": s.get("title") or "",
+                "kaynak": "deezer", "not_": "1000px"}
+    except Exception as ex:
+        print("[kapak] deezer:", str(ex)[:60], flush=True)
+        return None
+
+
+def _kapak_caa(q):
+    try:
+        r = requests.get("https://musicbrainz.org/ws/2/release/",
+                         params={"query": q, "fmt": "json", "limit": 1},
+                         headers={"User-Agent": "mp3-apisi/1.0 (github.com/kcbyk/Mp3_apisi)"},
+                         timeout=15)
+        rls = ((r.json().get("releases") or [{}])[0])
+        mbid = rls.get("id")
+        if not mbid:
+            return None
+        rgid = (rls.get("release-group") or {}).get("id")
+        time.sleep(1.05)  # MusicBrainz nezaket siniri (1 istek/sn)
+        adaylar = []
+        if rgid:
+            adaylar.append(f"https://coverartarchive.org/release-group/{rgid}/front")
+        adaylar.append(f"https://coverartarchive.org/release/{mbid}/front")
+        for u in adaylar:
+            try:
+                rr = requests.get(u, headers=ARA_HTTP, timeout=30)
+                if rr.status_code == 200 and rr.content[:2] in (b"\xff\xd8", b"\x89P"):
+                    return {"url": u,
+                            "sanatci": ((rls.get("artist-credit") or [{}])[0].get("name") or ""),
+                            "album": rls.get("title") or "", "baslik": rls.get("title") or "",
+                            "kaynak": "cover-art-archive", "not_": "orijinal tarama (en yuksek kalite)"}
+            except Exception:
+                pass
+        return None
+    except Exception as ex:
+        print("[kapak] caa:", str(ex)[:60], flush=True)
+        return None
+
+
+def _kapak_yt(q):
+    try:
+        from youtube_search import YoutubeSearch
+        sonuc = YoutubeSearch(q, max_results=1).to_dict()
+        if not sonuc:
+            return None
+        vid = sonuc[0].get("id")
+        if not vid:
+            return None
+        return {"url": f"https://i.ytimg.com/vi/{vid}/maxresdefault.jpg",
+                "yedek": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
+                "sanatci": sonuc[0].get("channel") or "",
+                "album": "", "baslik": sonuc[0].get("title") or "",
+                "kaynak": "youtube (video karesi)", "not_": "album kapagi degil, video karesi"}
+    except Exception as ex:
+        print("[kapak] yt:", str(ex)[:60], flush=True)
+        return None
+
+
+def kapak_bul(q):
+    """Album kapagi bul: iTunes (hizli) -> Deezer (1000px) -> Cover Art Archive
+    (orijinal tarama) -> YouTube karesi (son care). Kapak indirilip gercek boyutu
+    dogrulanir. Donen: (veri, hata)"""
+    import time as _t
+    t0 = _t.time()
+    for adim in (_kapak_itunes, _kapak_deezer, _kapak_caa, _kapak_yt):
+        ad = adim(q)
+        if not ad:
+            continue
+        for u in [ad["url"]] + ([ad["yedek"]] if ad.get("yedek") else []):
+            try:
+                rr = requests.get(u, headers=ARA_HTTP, timeout=25)
+                if rr.status_code != 200 or len(rr.content) < 3000:
+                    continue
+                boy = _resim_boyut(rr.content)
+                return {"kapak_url": u,
+                        "genislik": boy[0] if boy else None,
+                        "yukseklik": boy[1] if boy else None,
+                        "kaynak": ad["kaynak"], "sanatci": ad["sanatci"],
+                        "album": ad["album"], "baslik": ad["baslik"],
+                        "format": ("jpeg" if rr.content[:2] == b"\xff\xd8" else "png"),
+                        "boyut_kb": len(rr.content) // 1024,
+                        "sure_sn": round(_t.time() - t0, 2), "not_": ad["not_"]}, None
+            except Exception as ex:
+                print("[kapak] indirme:", str(ex)[:60], flush=True)
+                continue
+    return None, "Kapak bulunamadi (tum kaynaklar bos dondu)"
+
+
 def sc_prog_url_bul(track_url):
     """SoundCloud parca URL'sinden progressive transcoding url'sini cozer (resolve API)."""
     cid = sc_client_id()

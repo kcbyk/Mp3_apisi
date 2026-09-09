@@ -114,6 +114,11 @@ def sozler(q, sanatci="", sure=0):
 
 # ------------------- INDIRMEDEN OYNATMA (direct link) -------------------
 
+def kapak_bul(q):
+    """Album kapagi — motor telegram_bot.kapak_bul. Dönen: (veri, hata)."""
+    return core.kapak_bul(q)
+
+
 def oku(url, max_karakter=6000):
     """Sayfa okuma (jina reader) — motor telegram_bot.oku. Dönen: (veri, hata)."""
     return core.oku(url, max_karakter)
