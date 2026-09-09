@@ -1035,12 +1035,24 @@ def web_ara(q, limit=10):
 
 def oku(url, max_karakter=6000):
     """Sayfayi okuyup LLM'e hazır temiz metni dondurur (jina reader — kendi IP'siyle
-    ceker, datacenter dostu). Dönen: (veri, hata); veri={baslik, metin, karakter, kirpildi}"""
+    ceker, datacenter dostu). 429/5xx'de kisa araliklarla 3 deneme.
+    Dönen: (veri, hata); veri={baslik, metin, karakter, kirpildi}"""
+    r = None
+    for deneme in range(3):
+        try:
+            r = requests.get("https://r.jina.ai/" + url,
+                             headers={"User-Agent": ARA_HTTP["User-Agent"]}, timeout=40)
+            if r.status_code == 200:
+                break
+            if r.status_code not in (429, 500, 502, 503):
+                return None, f"sayfa okunamadı (HTTP {r.status_code})"
+        except Exception as ex:
+            return None, f"okuma hatası: {str(ex)[:80]}"
+        if deneme < 2:
+            time.sleep(1.2 + deneme * 0.6)  # jina 429 penceresi
+    if r is None or r.status_code != 200:
+        return None, f"sayfa okunamadı (HTTP {r.status_code if r is not None else '?'}) — jina limiti, biraz sonra tekrar dene"
     try:
-        r = requests.get("https://r.jina.ai/" + url,
-                         headers={"User-Agent": ARA_HTTP["User-Agent"]}, timeout=40)
-        if r.status_code != 200:
-            return None, f"sayfa okunamadı (HTTP {r.status_code})"
         metin = r.text.strip()
         baslik = ""
         if metin.startswith("Title:"):
