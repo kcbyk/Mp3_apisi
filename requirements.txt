@@ -3,3 +3,4 @@ requests>=2.31
 yt-dlp>=2025.1.1
 youtube-search>=2.1.1
 imageio-ffmpeg>=0.5
+ddgs

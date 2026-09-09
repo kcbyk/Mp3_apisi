@@ -46,10 +46,10 @@ BASE = Path(__file__).resolve().parent
 KEYF = BASE / "api_key.txt"
 API_KEY = (os.environ.get("API_KEY") or (KEYF.read_text().strip() if KEYF.exists() else "")).strip()
 
-SAGLAYICILAR = ["youtube", "soundcloud", "archive", "tiktok"]
-IC_KOD = {"youtube": "yt", "soundcloud": "sc", "archive": "ia", "tiktok": "tt"}
-DI_KOD = {"yt": "youtube", "sc": "soundcloud", "ia": "archive", "tt": "tiktok"}
-DI_AD = {"yt": "youtube", "sc": "soundcloud", "ia": "archive.org", "tt": "tiktok"}
+SAGLAYICILAR = ["youtube", "soundcloud", "archive", "tiktok", "web"]
+IC_KOD = {"youtube": "yt", "soundcloud": "sc", "archive": "ia", "tiktok": "tt", "web": "web"}
+DI_KOD = {"yt": "youtube", "sc": "soundcloud", "ia": "archive", "tt": "tiktok", "web": "web"}
+DI_AD = {"yt": "youtube", "sc": "soundcloud", "ia": "archive.org", "tt": "tiktok", "web": "web arama"}
 
 
 # ============================ KEY DEPOSU ============================
@@ -284,7 +284,7 @@ def _admin_kontrol():
 
 @app.get("/api/v1/health")
 def health():
-    return jsonify(ok=True, servis="sarki-api", surum="4.6.2",
+    return jsonify(ok=True, servis="sarki-api", surum="4.7",
                    ffmpeg=api_core.ffmpeg_var(),
                    zaman=time.strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -298,6 +298,7 @@ def search():
         return _hata("q parametresi gerekli", 400)
     izin = {ic for ic, dis in DI_KOD.items() if dis in g.izin}
     izin.discard("tt")  # TikTok anahtar kelime ile aranamaz — yalnız url ile çalışır
+    izin.discard("web")  # web /web ucundadir, muzik aramasinin motoru degildir
     try:
         sonuc = api_core.ara(q, max(1, min(limit, 30)), kaynaklar=izin)
     except Exception as ex:
@@ -350,6 +351,7 @@ def instant():
         return _hata("kalite, mp3'te 128/192/320; mp4'te 360/480/720/1080 olabilir", 400)
     izin = {ic for ic, dis in DI_KOD.items() if dis in g.izin}
     izin.discard("tt")  # TikTok anahtar kelime ile aranamaz — yalnız url ile çalışır
+    izin.discard("web")  # web /web ucundadir, muzik aramasinin motoru degildir
     sonuc = api_core.ara(q, 10, kaynaklar=izin)
     if fmt == "mp4":  # video yalniz YouTube'dan olur
         sonuc = [s for s in sonuc if s.get("kaynak") == "yt"]
@@ -498,6 +500,26 @@ def sozler_ep():
                    satirlar=satirlar, satir_sayisi=len(satirlar))
 
 
+@app.get("/api/v1/web")
+@korumali
+def web_ep():
+    """Genel web arama (Google-CSE tarzi, anahtarsiz motor zinciri)."""
+    q = (request.args.get("q") or "").strip()
+    try:
+        limit = int(request.args.get("limit") or 10)
+    except ValueError:
+        limit = 10
+    if not q:
+        return _hata("q parametresi gerekli", 400)
+    if "web" not in g.izin:
+        return _hata("Bu key 'web' sağlayıcısına izinli değil", 403)
+    t0 = time.time()
+    sonuc, motor = api_core.web_ara(q, max(1, min(limit, 20)))
+    return jsonify(ok=True, q=q, adet=len(sonuc), motor=motor or "yok",
+                   sure_sn=round(time.time() - t0, 2), sonuclar=sonuc,
+                   not_="DuckDuckGo operatörleri desteklenir: site:, filetype:, intitle:, -hariç")
+
+
 @app.get("/api/v1/status/<jid>")
 @korumali
 def status(jid):
@@ -610,7 +632,7 @@ input:focus{border-color:#7c5cff}
 .keyTarih{color:#5d6784;font-size:12px;margin-left:8px}
 .keyKey{font-family:monospace;font-size:13px;color:#00d4ff;margin:8px 0;word-break:break-all;cursor:pointer}
 .rozet{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:2px 8px;margin-right:4px;background:#1c2438;color:#a9b4cc}
-.rozet.yt{background:#3b1212;color:#f87171}.rozet.sc{background:#3b2a12;color:#fb923c}.rozet.ia{background:#122d3b;color:#38bdf8}.rozet.tt{background:#20242e;color:#25f4ee}.rozet.tm{background:#231b3b;color:#a78bfa}
+.rozet.yt{background:#3b1212;color:#f87171}.rozet.sc{background:#3b2a12;color:#fb923c}.rozet.ia{background:#122d3b;color:#38bdf8}.rozet.tt{background:#20242e;color:#25f4ee}.rozet.wb{background:#1a2e1a;color:#4ade80}.rozet.tm{background:#231b3b;color:#a78bfa}
 .sil{float:right;background:none;border:none;color:#5d6784;font-size:16px;cursor:pointer}
 .sil:hover{color:#f87171}
 details{background:#131a2b;border:1px solid #26304d;border-radius:12px;padding:14px 18px;margin-bottom:16px}
@@ -754,7 +776,7 @@ async function olustur(){
   ornekYaz();listeYukle();
 }
 function rozet(s){
-  const m={tumu:['tm','✨ Tümü'],youtube:['yt','▶️ YouTube'],soundcloud:['sc','☁️ SoundCloud'],archive:['ia','📼 Archive'],tiktok:['tt','🎵 TikTok']};
+  const m={tumu:['tm','✨ Tümü'],youtube:['yt','▶️ YouTube'],soundcloud:['sc','☁️ SoundCloud'],archive:['ia','📼 Archive'],tiktok:['tt','🎵 TikTok'],web:['wb','🌐 Web']};
   const[c,a]=m[s]||['','?'];return '<span class="rozet '+c+'">'+a+'</span>';
 }
 async function listeYukle(){
@@ -856,6 +878,12 @@ Key'in sadece seçtiğin sağlayıcılara erişir. Keyler GitHub'da kalıcı sak
 <span class="yol">GET /api/v1/status/{job_id}</span><span class="etiket get">GET</span>
 <p class="acik">İşin durumu: yüzde, mesaj, bitince <code>dosya_url</code>.</p>
 <pre>→ {"ok":true,"durum":"bitti","yuzde":100,"dosya":"Tarkan - Kuzu Kuzu.mp3","dosya_url":"/api/v1/file/..."}</pre>
+</div>
+
+<div class="kart">
+<span class="yol">GET /api/v1/web?q={sorgu}&limit=10</span><span class="etiket get">GET</span>
+<p class="acik"><b>Genel web arama</b> (Google-CSE tarzı, anahtarsız ve ücretsiz): DuckDuckGo → lite HTML → Wikipedia zinciri. <code>site:</code>, <code>filetype:</code>, <code>intitle:</code> operatörleri desteklenir. "Tümü" keylerde açıktır.</p>
+<pre>→ {"ok":true,"q":"...","adet":10,"motor":"duckduckgo","sonuclar":[{"baslik":"...","url":"https://...","ozet":"..."}]}</pre>
 </div>
 
 <div class="kart">

@@ -906,6 +906,75 @@ def tt_indir(url, baslik, ilerleme=None, ses=False, max_mb=150):
     return fname, None
 
 
+# ------------------- WEB ARAMA MOTORU (Google-CSE tarzi, anahtarsiz) -------------------
+_web_cache = {}
+_web_kilit = __import__("threading").Lock()
+
+
+def web_ara(q, limit=10):
+    """Genel web aramasi — DuckDuckGo (ddgs kutuphanesi) -> DDG lite HTML -> Wikipedia.
+    Anahtarsiz ve ucretsiz. Dönen: (sonuclar, motor_adi); sonuclar: [{baslik, url, ozet}]"""
+    import time as _t
+    anahtar = (q.lower().strip(), limit)
+    with _web_kilit:
+        kayit = _web_cache.get(anahtar)
+        if kayit and _t.time() - kayit[0] < 600:
+            return kayit[1]
+    sonuc, motor = [], ""
+    # 1) ddgs kutuphanesi (DuckDuckGo)
+    try:
+        from ddgs import DDGS
+        for x in DDGS().text(q, max_results=limit):
+            u = x.get("href") or x.get("url") or ""
+            if u:
+                sonuc.append({"baslik": (x.get("title") or "").strip()[:150],
+                              "url": u,
+                              "ozet": (x.get("body") or x.get("excerpt") or "").strip()[:300]})
+        motor = "duckduckgo"
+    except Exception as ex:
+        print("[web] ddgs hata:", str(ex)[:70], flush=True)
+    # 2) DDG lite HTML (ayni motor, farkli yuzey)
+    if not sonuc:
+        try:
+            r = requests.post("https://lite.duckduckgo.com/lite/", data={"q": q},
+                              headers=ARA_HTTP, timeout=20)
+            linkler = [(u, re.sub("<[^>]+>", "", t).strip())
+                       for u, t in re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', r.text)]
+            snip = [re.sub(r"\s+", " ", re.sub("<[^>]+>", "", s)).strip()
+                    for s in re.findall(r'class="result-snippet"[^>]*>(.*?)</td>', r.text, re.S)]
+            gorulen = set()
+            for i, (u, t) in enumerate(linkler):
+                if "duckduckgo.com" in u or u in gorulen or not t:
+                    continue
+                gorulen.add(u)
+                sonuc.append({"baslik": t[:150], "url": u,
+                              "ozet": (snip[i] if i < len(snip) else "")[:300]})
+                if len(sonuc) >= limit:
+                    break
+            motor = "duckduckgo-lite"
+        except Exception as ex:
+            print("[web] lite hata:", str(ex)[:70], flush=True)
+    # 3) Wikipedia (son cikis)
+    if not sonuc:
+        try:
+            r = requests.get("https://tr.wikipedia.org/w/api.php", params={
+                "action": "query", "list": "search", "srsearch": q, "format": "json",
+                "srlimit": min(limit, 10)}, headers=ARA_HTTP, timeout=15)
+            for s in (r.json().get("query") or {}).get("search") or []:
+                sonuc.append({"baslik": s.get("title", "") + " — Vikipedi",
+                              "url": "https://tr.wikipedia.org/wiki/" +
+                                     urllib.parse.quote(s.get("title", "").replace(" ", "_")),
+                              "ozet": re.sub("<[^>]+>", "", s.get("snippet", ""))[:300]})
+            motor = "wikipedia"
+        except Exception as ex:
+            print("[web] wikipedia hata:", str(ex)[:70], flush=True)
+    with _web_kilit:
+        if len(_web_cache) > 60:
+            _web_cache.clear()
+        _web_cache[anahtar] = (_t.time(), (sonuc, motor))
+    return sonuc, motor
+
+
 def sc_prog_url_bul(track_url):
     """SoundCloud parca URL'sinden progressive transcoding url'sini cozer (resolve API)."""
     cid = sc_client_id()

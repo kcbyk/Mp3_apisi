@@ -114,6 +114,12 @@ def sozler(q, sanatci="", sure=0):
 
 # ------------------- INDIRMEDEN OYNATMA (direct link) -------------------
 
+def web_ara(q, limit=10):
+    """Genel web arama (Google-CSE tarzi) — motor telegram_bot.web_ara.
+    Dönen: (sonuclar, motor_adi)."""
+    return core.web_ara(q, limit)
+
+
 def link_coz(item, fmt="mp3", kalite="320"):
     """Sonucu, INDIRMEDEN oynatilabilecek direkt CDN linkine cevirir. (url, hata)
     Sunucu diske hic yazmaz; oynatici linkten dogrudan akitar."""
