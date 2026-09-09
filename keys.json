@@ -5,8 +5,8 @@
    "youtube"
   ],
   "olusturma": "2026-08-30 08:50",
-  "kullanim": 44,
-  "son_kullanim": "2026-09-09 01:29"
+  "kullanim": 45,
+  "son_kullanim": "2026-09-09 02:20"
  },
  "sk-71c69f4de1f4b912957fed45": {
   "isim": "savio",
@@ -23,15 +23,6 @@
    "tumu"
   ],
   "olusturma": "2026-09-07 13:29",
-  "kullanim": 0,
-  "son_kullanim": null
- },
- "sk-7a52841f5e32ec3e3edf240f": {
-  "isim": "Son Kontrol",
-  "saglayicilar": [
-   "web"
-  ],
-  "olusturma": "2026-09-09 02:20",
   "kullanim": 0,
   "son_kullanim": null
  }
