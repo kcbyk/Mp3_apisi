@@ -284,7 +284,7 @@ def _admin_kontrol():
 
 @app.get("/api/v1/health")
 def health():
-    return jsonify(ok=True, servis="sarki-api", surum="4.8.2",
+    return jsonify(ok=True, servis="sarki-api", surum="4.8.3",
                    ffmpeg=api_core.ffmpeg_var(),
                    zaman=time.strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -697,7 +697,7 @@ footer a{color:#5d6784}
 </style></head><body><div class="sar">
 
 <h1>🎵 Şarkı API</h1>
-<p class="ac">Kişisel müzik indirme servisin — YouTube + SoundCloud + Archive.org</p>
+<p class="ac">Kişisel müzik indirme servisin — YouTube + SoundCloud + Archive.org + TikTok + 🌐 Web arama</p>
 <div class="pill"><span class="nokta" id="nk"></span><span id="nkYazi" style="color:#8b94ad">kontrol ediliyor…</span></div>
 
 <div class="uyari" id="uyariKutu"></div>
@@ -741,7 +741,9 @@ footer a{color:#5d6784}
       <div class="cip" data-s="soundcloud" onclick="cip('soundcloud')">☁️ SoundCloud</div>
       <div class="cip" data-s="archive" onclick="cip('archive')">📼 Archive.org</div>
       <div class="cip" data-s="tiktok" onclick="cip('tiktok')">🎵 TikTok</div>
+      <div class="cip" data-s="web" onclick="cip('web')">🌐 Web</div>
     </div>
+    <div class="etiket" style="font-size:12px;opacity:.7">🌐 Web = genel arama + sayfa okuma uçları (/web, /oku — AI/bot işleri için)</div>
     <div class="etiket" id="parolaEtiket" style="display:none">Yönetici şifresi</div>
     <input type="password" id="yParola" style="display:none" placeholder="••••••••">
     <div class="satir">
@@ -887,7 +889,7 @@ a{color:#5d6784}
 .sun{color:#7c5cff;font-weight:700}
 </style></head><body><div class="sar">
 <h1>🎵 Şarkı API — Doküman</h1>
-<p class="ac">Kişisel müzik indirme servisi — YouTube + SoundCloud + Archive.org. <a href="/">← Key arayüzüne dön</a></p>
+<p class="ac">Kişisel müzik indirme servisi — YouTube + SoundCloud + Archive.org + TikTok + 🌐 Web arama. <a href="/">← Key arayüzüne dön</a></p>
 
 <div class="kart">
 <span class="yol">🔑 Key Sistemi</span>
