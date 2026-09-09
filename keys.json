@@ -25,5 +25,14 @@
   "olusturma": "2026-09-07 13:29",
   "kullanim": 0,
   "son_kullanim": null
+ },
+ "sk-bda1af33e6ba89793f8f81b0": {
+  "isim": "Guard2",
+  "saglayicilar": [
+   "tumu"
+  ],
+  "olusturma": "2026-09-09 02:01",
+  "kullanim": 0,
+  "son_kullanim": null
  }
 }
