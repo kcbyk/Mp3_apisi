@@ -111,6 +111,9 @@ const schema = z.object({
   ALLOWED_NAV_HOSTS: list([]),
   STEP_TIMEOUT_MS: num(20_000),
   GENERATION_TIMEOUT_MS: num(90_000),
+  // Gönderim stratejisi: auto → arena.ai'de Enter (buton tıklaması ToS/reCAPTCHA kapısını tetikler),
+  // diğer hedeflerde butona tıklama. 'enter' | 'click' ile sabitlenebilir.
+  TARGET_SEND_MODE: str('auto'),
   ARTIFACT_POLL_INTERVAL_MS: num(500),
   WAIT_FOR_DOM_RESULT: bool(true),
   SCREENSHOT_ON_ERROR: bool(true),
@@ -222,6 +225,10 @@ export const config = {
     allowedNavHosts: env.ALLOWED_NAV_HOSTS,
     stepTimeoutMs: env.STEP_TIMEOUT_MS,
     generationTimeoutMs: env.GENERATION_TIMEOUT_MS,
+    sendMode:
+      env.TARGET_SEND_MODE === 'auto'
+        ? (/arena\.ai/i.test(env.TARGET_BASE_URL) ? 'enter' : 'click')
+        : env.TARGET_SEND_MODE,
     artifactPollIntervalMs: env.ARTIFACT_POLL_INTERVAL_MS,
     waitForDomResult: env.WAIT_FOR_DOM_RESULT,
     screenshotOnError: env.SCREENSHOT_ON_ERROR,

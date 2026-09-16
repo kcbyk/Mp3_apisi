@@ -34,6 +34,8 @@ const DEFAULT_ASSET_HOST_SUFFIXES = [
   'digitaloceanspaces.com',
   'backblazeb2.com',
   'supabase.co',
+  'r2.cloudflarestorage.com',
+  'cloudflarestorage.com',
 ];
 
 function hostAllowed(hostname) {

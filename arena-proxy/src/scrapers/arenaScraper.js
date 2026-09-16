@@ -134,18 +134,56 @@ async function gotoWithChallengeCheck(page, url, { signal } = {}) {
   return response;
 }
 
+/**
+ * Onay/ToS kapısını kapatır. arena.ai'de "…hit Enter on your keyboard to agree"
+ * metniyle gelen kapı Enter tuşunu yutar; bu yüzden kapı kapanana kadar
+ * (a) "Agree/Got it" butonuna tıklanır, (b) olmazsa Enter'a basılır ve
+ * (c) kapının gerçekten kaybolduğu doğrulanır.
+ */
+const ONAY_KAPISI_RE = /hit Enter on your keyboard to agree|By using Arena|reCAPTCHA and the Google/i;
+
+async function onayKapisiAcikMi(page) {
+  return page
+    .evaluate(() => {
+      const t = document.body.innerText;
+      return /hit Enter on your keyboard to agree/i.test(t);
+    })
+    .catch(() => false);
+}
+
 async function dismissConsent(page) {
   const selectors = loadSelectors();
-  const btn = await resolveSelector(page, selectors.consentBanner, {
-    key: 'consentBanner',
-    timeout: 1500,
-    waitFor: false,
-    optional: true,
-  });
-  if (btn) {
-    await humanClick(btn).catch(() => {});
-    await microPause(0.5);
+
+  for (let tur = 1; tur <= 3; tur += 1) {
+    // (a) bilinen onay butonları
+    const btn = await resolveSelector(page, selectors.consentBanner, {
+      key: 'consentBanner',
+      timeout: tur === 1 ? 2500 : 800,
+      waitFor: false,
+      optional: true,
+    });
+    if (btn) {
+      await humanClick(btn).catch(() => {});
+      await microPause(1);
+    }
+
+    if (!(await onayKapisiAcikMi(page))) return true;
+
+    // (b) Enter ile kabul
+    await page.keyboard.press('Enter').catch(() => {});
+    await microPause(1.2);
+    if (!(await onayKapisiAcikMi(page))) return true;
+
+    // (c) son tur: sayfa gövdesine tıkla + Enter
+    await page.mouse.click(700, 400).catch(() => {});
+    await microPause(0.4);
+    await page.keyboard.press('Enter').catch(() => {});
+    await microPause(1.2);
+    if (!(await onayKapisiAcikMi(page))) return true;
   }
+
+  logger.warn?.({ mod: 'arenaScraper' }, 'onay kapısı kapanmadı — gönderim adımında tekrar denenecek');
+  return false;
 }
 
 async function assertSessionValid(page) {
@@ -373,7 +411,7 @@ async function fillPrompts(page, { prompt, negativePrompt }) {
   return { negativeApplied };
 }
 
-async function clickGenerate(page) {
+async function clickGenerate(page, promptText = '') {
   const selectors = loadSelectors();
   const btn = await resolveSelector(page, selectors.generateButton, {
     key: 'generateButton',
@@ -388,7 +426,96 @@ async function clickGenerate(page) {
     await sleep(250);
   }
   await humanScroll(page, { steps: 1 });
-  await humanClick(btn);
+
+  const girdi = await resolveSelector(page, selectors.promptInput, {
+    key: 'promptInput',
+    timeout: 5000,
+    waitFor: false,
+    optional: true,
+  }).catch(() => null);
+
+  const gonderildiMi = async () =>
+    page
+      .evaluate((metin) => {
+        const ta = document.querySelector("textarea[placeholder^='Describe the image'], textarea");
+        const bos = ta ? ta.value.trim().length === 0 : true;
+        const gövde = document.body.innerText || '';
+        if (/(^|\s)(Generating|Creating|Rendering|Üretiliyor)(\s|$|\.|…)/i.test(gövde)) return true;
+        const parca = (metin || '').trim().slice(0, 40);
+        if (parca.length >= 8 && gövde.includes(parca)) return true;
+        return bos;
+      }, promptText)
+      .catch(() => true);
+
+  const bekleVeSor = async (tur = 6) => {
+    for (let i = 0; i < tur; i += 1) {
+      await sleep(500);
+      if (await gonderildiMi()) return true;
+    }
+    return false;
+  };
+
+  /**
+   * Gönderim stratejisi — ÖNCE Enter:
+   * arena.ai'de gönder BUTONUna tıklamak "…continue. This helps us keep the
+   * platform safe for everyone. Protected by reCAPTCHA" ara kapısını tetikliyor ve
+   * üretim hiç başlamıyor; Enter ile göndermek ise doğrudan çalışıyor.
+   * Çoğu SPA'da da Enter gönderir; olmazsa butona tıklanır (sahte hedef gibi).
+   */
+  const enterModu = config.target.sendMode !== 'click';
+
+  if (enterModu && girdi) {
+    await girdi.focus().catch(() => {});
+    await page.keyboard.press('Enter').catch(() => {});
+    if (await bekleVeSor()) return btn;
+  }
+
+  // Enter göndermediyse alan satır sonu biriktirmiş olabilir → orijinal metne döndür
+  if (girdi && promptText) {
+    const mevcut = await girdi.inputValue().catch(() => '');
+    if (mevcut.trim() !== promptText.trim()) await girdi.fill(promptText).catch(() => {});
+  }
+
+  try {
+    await btn.click({ timeout: 8000 });
+  } catch {
+    /* tıklama başarısız → aşağıdaki tekrar döngüsü devreye girer */
+  }
+  if (await bekleVeSor()) return btn;
+
+  // Son çare: mod 'click' ise Enter'ı da dene
+  if (!enterModu && girdi) {
+    await girdi.focus().catch(() => {});
+    await page.keyboard.press('Enter').catch(() => {});
+    if (await bekleVeSor()) return btn;
+  }
+
+  // Hâlâ gönderilemediyse: onay kapısını kapatıp tekrar dene (onay kapıları Enter'ı yutabilir)
+  let gonderildi = false;
+  for (let tur = 1; tur <= 3 && !gonderildi; tur += 1) {
+    logger.warn?.({ mod: 'arenaScraper', tur }, 'mesaj gönderilemedi — onay kapısı kapatılıp tekrar denenecek');
+    await dismissConsent(page);
+    const girdi2 = await resolveSelector(page, selectors.promptInput, {
+      key: 'promptInput',
+      timeout: 4000,
+      waitFor: false,
+      optional: true,
+    }).catch(() => null);
+    if (girdi2) {
+      await girdi2.focus().catch(() => {});
+      // Alan boşalmışsa metni yeniden yaz (yeniden gönderim için)
+      const deger = await girdi2.inputValue().catch(() => '');
+      if (!deger.trim() && promptText) await girdi2.fill(promptText).catch(() => {});
+    }
+    await page.keyboard.press('Enter').catch(() => {});
+    gonderildi = await bekleVeSor(6);
+  }
+
+  if (!gonderildi) {
+    // Son çare: butona tekrar tıkla
+    await btn.click({ timeout: 5000, force: true }).catch(() => {});
+    await sleep(2000);
+  }
   return btn;
 }
 
@@ -471,7 +598,7 @@ export async function runGeneration({ page, context }, params, { signal, taskId 
     capture.attach();
     capture.markBaseline();
 
-    await step('click_generate', () => clickGenerate(page));
+    await step('click_generate', () => clickGenerate(page, norm.prompt));
 
     // 4) Üretim tamamlanmasını bekle + asset URL'ini yakala
     const candidate = await step('capture_artifact', () =>

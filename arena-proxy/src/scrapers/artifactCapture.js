@@ -17,9 +17,9 @@ import { ArtifactNotFoundError } from '../errors.js';
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|webp|avif|gif|bmp|tiff?|svg)(\?|#|$)/i;
 const CDN_HOST_RE =
-  /(amazonaws\.com|cloudfront\.net|storage\.googleapis\.com|googleusercontent\.com|blob\.core\.windows\.net|digitaloceanspaces\.com|backblazeb2\.com|cloudflare-?stream|imgix\.net|cloudinary\.com|supabase\.co|r2\.dev|akamaihd\.net|fastly\.net|b-cdn\.net|cdn\.|files\.|media\.|assets\.|static\.)/i;
+  /(cloudflarestorage\.com|r2\.cloudflarestorage|amazonaws\.com|cloudfront\.net|storage\.googleapis\.com|googleusercontent\.com|blob\.core\.windows\.net|digitaloceanspaces\.com|backblazeb2\.com|cloudflare-?stream|imgix\.net|cloudinary\.com|supabase\.co|r2\.dev|akamaihd\.net|fastly\.net|b-cdn\.net|cdn\.|files\.|media\.|assets\.|static\.)/i;
 const NEGATIVE_URL_RE =
-  /(favicon|sprite|logo[-_.]?\d*|avatar|placeholder|spinner|loader|loading|blurhash|1x1\.|pixel\.gif|icon[-_.]?\d*\.(png|svg)|apple-touch|og-image|emoji|flag)/i;
+  /(favicon|sprite|logo[-_.]?\d*|avatar|placeholder|spinner|loader|loading|blurhash|1x1\.|pixel\.gif|icon[-_.]?\d*\.(png|svg)|apple-touch|og-image|emoji|flag|googleusercontent|gravatar|profile[-_]?(pic|photo|image)|=s\d+(-c)?$)/i;
 const IMAGE_MIME_RE = /^image\/(png|jpe?g|webp|avif|gif|bmp|tiff?)/i;
 
 /** İç içe JSON içinde asset benzeri tüm string'leri topla */
@@ -52,6 +52,8 @@ function absolutize(url, base) {
 function scoreUrl(url) {
   let score = 0;
   const reasons = [];
+  // Not: Aşağıdaki desenler jenerik CDN imzalarıdır; sayfa-dışı host kuralı
+  // scanDom içinde büyük görseller için ek puan olarak uygulanır.
   if (!url) return { score: -999, reasons: ['boş'] };
   if (NEGATIVE_URL_RE.test(url)) return { score: -999, reasons: ['negatif pattern (ikon/avatar/placeholder)'] };
 
@@ -81,6 +83,8 @@ export class ArtifactCapture {
     this.jsonHits = [];
     this.wsFrames = 0;
     this.markedAt = Date.now();
+    this._baseline = null;
+    this._baselineReady = false;
     this._unsubs = [];
     this._attached = false;
   }
@@ -246,7 +250,11 @@ export class ArtifactCapture {
     }
   }
 
-  /** DOM'u tara: gerçek <img> elementleri en güvenilir kaynaktır */
+  /**
+   * DOM'u tara: gerçek <img> elementleri en güvenilir kaynaktır.
+   * NOT: İlk tarama "temel çizgi" (baseline) olarak kaydedilir; üretimden ÖNCE
+   * sayfada duran görseller (kullanıcı avatarı, logo, banner) aday SAYILMAZ.
+   */
   async scanDom() {
     const page = this.page;
     const frames = [page, ...page.frames().filter((f) => f !== page.mainFrame())];
@@ -297,15 +305,31 @@ export class ArtifactCapture {
       }
     }
 
+    // İlk turda mevcut görselleri temel çizgi olarak al (avatar/logo yanlış eşleşmesini önler)
+    if (!this._baselineReady) {
+      this._baseline = new Set();
+      for (const item of collected) {
+        const u = absolutize(item.url, item.frameUrl || page.url());
+        if (u) this._baseline.add(u.split('#')[0]);
+      }
+      this._baselineReady = true;
+      this.log.debug?.({ adet: this._baseline.size }, 'DOM temel çizgisi kaydedildi');
+      return this.best();
+    }
+
     for (const item of collected) {
       const url = absolutize(item.url, item.frameUrl || page.url());
       if (!url) continue;
+      if (this._baseline?.has(url.split('#')[0])) continue; // üretimden önce de vardı → atla
       const isBig = (item.w ?? 0) >= 300 || (item.h ?? 0) >= 300;
       const { score, reasons } = scoreUrl(url);
-      if (score < 2) continue;
+      // Eşik, bonuslar DAHİL toplam skora göre uygulanır: uzantısız CDN URL'leri
+      // (örn. R2) temel skorda düşük kalır ama büyük <img> olarak güçlü sinyaldir.
+      const toplam = score + (isBig ? 4 : 1) + (item.tag === 'img' ? 1 : 0) + (item.tag === 'img' && isBig ? 2 : 0);
+      if (toplam < 2) continue;
       this._add(url, {
         source: `dom:${item.tag}`,
-        score: score + (isBig ? 4 : 1) + (item.tag === 'img' ? 1 : 0),
+        score: toplam,
         reasons: [...reasons, `dim=${item.w ?? '?'}x${item.h ?? '?'}`],
         at: Date.now(),
       });
@@ -345,6 +369,31 @@ export class ArtifactCapture {
         await this.scanDom();
         const domStrong = this.ranked().find((c) => c.score >= minScore);
         if (domStrong) return domStrong;
+      }
+
+      // Teşhis (DEBUG_CAPTURE=1): her 10 turda sayfada ne olduğunu logla
+      if (process.env.DEBUG_CAPTURE === '1' && round % 20 === 0) {
+        try {
+          const durum = await this.page.evaluate(() => {
+            const imgs = [...document.querySelectorAll('img')]
+              .filter((x) => x.naturalWidth >= 200 && !/googleusercontent|particles|apple-touch|recaptcha/i.test(x.src))
+              .map((x) => ({ src: x.src.slice(0, 90), w: x.naturalWidth, h: x.naturalHeight }));
+            return {
+              imgs,
+              metinSon: document.body.innerText.replace(/\s+/g, ' ').slice(-140),
+            };
+          });
+          this.log.warn?.({
+            sn: Math.round((Date.now() - (this.markedAt || Date.now())) / 1000),
+            adaySayisi: this.ranked().length,
+            enIyi: this.ranked()[0] ? `${this.ranked()[0].score} ${shorten(this.ranked()[0].url)}` : null,
+            domGorsel: durum.imgs.length,
+            ilkGorsel: durum.imgs[0] || null,
+            metinSon: durum.metinSon,
+          }, '🔍 yakalama teşhisi');
+        } catch (e) {
+          this.log.warn?.({ err: String(e).slice(0, 80) }, '🔍 teşhis başarısız');
+        }
       }
 
       round += 1;
