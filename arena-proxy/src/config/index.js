@@ -150,7 +150,8 @@ const schema = z.object({
   //                    istek bazlı da seçilebilir; girilmezse bu varsayılan kullanılır.
   IMAGE_PROVIDER: str('arena'),
   POLLINATIONS_BASE_URL: str('https://image.pollinations.ai/prompt'),
-  POLLINATIONS_MODEL: str('flux'), // flux (kalite/varsayılan) | turbo (hız)
+  POLLINATIONS_GEN_BASE_URL: str('https://gen.pollinations.ai/image'),
+  POLLINATIONS_MODEL: str('flux'), // alias da olur: flux→flux.1-schnell | z-image-turbo | turbo ...
   POLLINATIONS_TOKEN: str(''),     // opsiyonel seed-tier anahtar (yoksa anon katman)
   POLLINATIONS_TIMEOUT_MS: num(180_000),
   ARTIFACT_PUBLIC_BASE_URL: str(''),
@@ -295,6 +296,7 @@ export const config = {
   imageProvider: {
     name: env.IMAGE_PROVIDER === 'pollinations' ? 'pollinations' : 'arena',
     baseUrl: env.POLLINATIONS_BASE_URL.replace(/\/+$/, ''),
+    genBaseUrl: env.POLLINATIONS_GEN_BASE_URL.replace(/\/+$/, ''),
     model: env.POLLINATIONS_MODEL,
     token: env.POLLINATIONS_TOKEN || null,
     timeoutMs: env.POLLINATIONS_TIMEOUT_MS,

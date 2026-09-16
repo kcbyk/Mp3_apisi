@@ -495,3 +495,19 @@ arena.ai zinciri (oturum rotasyonu + Cloudflare + bekçi) kırılınca yeni stra
   biçimleri (`url|base64|file|both`) arena akışıyla birebir aynıdır.
 - Sağlık: `/api/v1/health` içinde `image_provider` alanı; pollinations modunda
   readiness oturum dosyası kontrolü yapmaz (gereksiz kırmızılığı önler).
+
+### 13.1) Seed-tier yükseltmesi (2026-09-16 akşamı) — filigransız + gerçek modeller
+
+Pollinations anon katmanının canlı keşfi: **hangi modeli istediğiniz önemsiz** — flux/z-image-turbo
+hepsi bayt-bayt AYNI "sana" 768px dosyasını döndürüyor ve sağ altta filigran var (`nologo` yok sayılıyor).
+Çözüm: ücretsiz **seed anahtarı** (enter.pollinations.ai → GitHub ile giriş, kart yok):
+
+- `POLLINATIONS_TOKEN=sk_...` verildiğinde servis yeni `gen.pollinations.ai/image` endpoint'ine
+  `Authorization: Bearer` ile çıkar; anahtar asla URL'e yazılmaz (log/jobs cevaplarında sızmaz).
+- `POLLINATIONS_MODEL=flux` (alias → `black-forest-labs/flux.1-schnell`) veya `z-image-turbo`.
+  Test edildi: 1024×1024 gerçek çıktı, filigransız, ~8-15sn.
+- **402 = bakiyesiz ücretli model** (Seedream 4.5, FLUX.2 Pro): tekrar DENENMEZ, hata mesajında
+  ucuz modele dönme önerisiyle döner. **429/5xx = geçici** → 3 denemeye kadar backoff.
+- Anahtarlı modda URL'ler dışarıya kapalıdır → `delivery:'url'` isteği otomatik `file`'a
+  düşürülür (görsel zaten indirildiği için kayıp yok; `meta.delivery_note` açıklar).
+- Anon kalmak isterseniz `POLLINATIONS_TOKEN` boş bırakın: eski davranış aynen korunur.

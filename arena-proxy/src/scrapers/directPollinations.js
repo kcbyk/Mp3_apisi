@@ -1,17 +1,19 @@
 /**
  * src/scrapers/directPollinations.js
  * ---------------------------------------------------------------------------
- * Tarayıcısız görsel sağlayıcısı: Pollinations URL API'si.
+ * Tarayıcısız görsel sağlayıcısı: Pollinations URL API'si (iki mod).
  *
- * Neden var?
- *   arena.ai gibi hedefler oturum + Cloudflare zinciri ister; Chromium sürmek ağırdır.
- *   Pollinations ise tamamen açık bir API'dir: oturum yok, anahtar yok, challenge yok.
- *   GET image.pollinations.ai/prompt/<prompt>?width=..&height=..  → direkt JPEG.
+ *   TOKENLI (seed-tier)  → gen.pollinations.ai/image + "Authorization: Bearer"
+ *     • Gerçek modeller: flux.1-schnell, z-image-turbo, seedream-4.5, flux.2-pro...
+ *     • 1024px+ çözünürlük, filigransız (nologo= gerçekten çalışır)
+ *     • Canlı ölçüm 2026-09-16: ~8sn/1024px, 402 = ücretli model + bakiye yok
+ *   ANON (anahtarsız)    → image.pollinations.ai/prompt (legacy)
+ *     • Model parametresi görmezden gelinir → hep "sana" 768px + sağ altta filigran
+ *     • Paylaşımlı havuzun geçici "300 RPM" 5xx'leri; 3 denemeli backoff burada da işler
  *
- *   (Canlı ölçüm 2026-09-16: cache'li prompt ~0.5sn, taze prompt ~4sn, 1024px.)
- *
- * Not: URL API'sinde negatif prompt parametresi YOKTUR; stil bilgisi prompt'a eklenir.
- * Asıl güç/kalite kontrolü gerekiyorsa 'arena' sağlayıcısı hâlâ kullanılabilir.
+ * Not: URL API'sinde negatif prompt param'ı YOK; stil bilgisi prompt'a eklenir.
+ * Anahtarlı modda `delivery:'url'` anlamsızlaşır (URL anahtarsız erişilemez) →
+ * 'file'a düşürülür: görsel zaten indirilmiştir, diske persist edilir.
  */
 import crypto from 'node:crypto';
 import { config } from '../config/index.js';
@@ -52,52 +54,54 @@ export function buildPrompt(prompt, style = '') {
 
 /**
  * Parametrelerden üretim URL'si kur.
- * @returns {{url:string, width:number, height:number, seed:number, promptEtkin:string}}
+ * Token varsa gen endpoint'i seçilir ve anahtar URL'e YAZILMAZ (Bearer header'a gider).
+ * @returns {{url:string, width:number, height:number, seed:number, promptEtkin:string, tokenMode:boolean, endpoint:'gen'|'legacy'}}
  */
 export function buildUrl(params, { cfg = config.imageProvider } = {}) {
   const { width, height } = aspectToSize(params.aspectRatio);
   const promptEtkin = buildPrompt(params.prompt, params.style);
   const seed = params.seed ?? Math.floor(Math.random() * 2 ** 31);
+  const tokenMode = Boolean(cfg.token);
+  const base = (tokenMode ? (cfg.genBaseUrl || cfg.baseUrl) : cfg.baseUrl).replace(/\/+$/, '');
   const q = new URLSearchParams({
     width: String(width),
     height: String(height),
-    model: cfg.model,
+    model: cfg.model, // kanonik id'deki "/" URLSearchParams ile %2F'a kodlanır (gen endpoint kabul ediyor)
     seed: String(seed),
     nologo: 'true',
   });
-  if (cfg.token) q.set('token', cfg.token);
-  const url = `${cfg.baseUrl}/${encodeURIComponent(promptEtkin)}?${q}`;
-  return { url, width, height, seed, promptEtkin };
+  const url = `${base}/${encodeURIComponent(promptEtkin)}?${q}`;
+  return { url, width, height, seed, promptEtkin, tokenMode, endpoint: tokenMode ? 'gen' : 'legacy' };
 }
 
 /**
  * Üretimi yap ve görseli indir; deliverArtifact ile aynı teslim nesnesini döndür.
  *
- * @param {{prompt:string, aspectRatio?:string, style?:string, negativePrompt?:string}} params  normalizeParams sonrası
+ * @param {{prompt:string, aspectRatio?:string, style?:string, negativePrompt?:string, seed?:number}} params
  * @param {{taskId?:string, delivery?:string, signal?:AbortSignal, onProgress?:Function}} opts
  */
 export async function pollinationsGenerate(params, { taskId = 'anon', delivery, signal, onProgress } = {}) {
   const t0 = Date.now();
   const cfg = config.imageProvider;
-  const { url, width, height, seed, promptEtkin } = buildUrl(params);
+  const { url, width, height, seed, promptEtkin, tokenMode, endpoint } = buildUrl(params);
   onProgress?.({ step: 'pollinations_fetch', ms: 0 });
+
+  const headers = { 'user-agent': config.stealth.userAgent, accept: 'image/*,*/*;q=0.8' };
+  if (tokenMode) headers.authorization = `Bearer ${cfg.token}`;
 
   const zamanAsimi = AbortSignal.timeout(cfg.timeoutMs);
   const sinyal = signal
     ? AbortSignal.any([signal, zamanAsimi])
     : zamanAsimi;
 
-  // Anon katman paylaşımlı GPU havuzuna bağlı; canlıda "300 RPM exceeded" tarzı
-  // geçici 5xx sık geliyor → 5xx/ağ hatasında kısa backoff ile 3 denemeye kadar dene.
+  // Anon havuz 5xx'leri + gen endpoint 429'ları geçicidir → backoff ile 3 deneme.
+  // 402 (bakiye/paywall) ve diğer 4xx'ler tekrarlanmaz: kalıcı yanıt demektir.
   const DENEME = 3;
   const bekle = (ms) => new Promise((r) => setTimeout(r, ms));
   let response = null;
   for (let deneme = 1; deneme <= DENEME; deneme += 1) {
     try {
-      response = await fetch(url, {
-        signal: sinyal,
-        headers: { 'user-agent': config.stealth.userAgent, accept: 'image/*,*/*;q=0.8' },
-      });
+      response = await fetch(url, { signal: sinyal, headers });
     } catch (err) {
       if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
         throw new UpstreamError(`Pollinations ${cfg.timeoutMs}ms içinde yanıt vermedi.`, { provider_http: 0 });
@@ -112,14 +116,17 @@ export async function pollinationsGenerate(params, { taskId = 'anon', delivery, 
 
     if (response.ok) break;
     const body = await response.text().catch(() => '');
-    const gecici = response.status >= 500;
+    const gecici = response.status >= 500 || response.status === 429;
     if (gecici && deneme < DENEME) {
       log.warn({ deneme, status: response.status, body: body.slice(0, 120) }, 'geçici backend hatası — yeniden deneniyor');
       response = null;
       await bekle(4000 * deneme + Math.random() * 2000);
       continue;
     }
-    throw new UpstreamError(`Pollinations üretimi başarısız (HTTP ${response.status}).`, {
+    const not = response.status === 402
+      ? ' Bakiye yetersiz: bu model ücretli Pollen ister; enter.pollinations.ai/top-up bakın veya POLLINATIONS_MODEL ucuz bir modele çekin (flux / z-image-turbo).'
+      : '';
+    throw new UpstreamError(`Pollinations üretimi başarısız (HTTP ${response.status}).${not}`, {
       provider_http: response.status,
       body: body.slice(0, 200),
     });
@@ -145,11 +152,17 @@ export async function pollinationsGenerate(params, { taskId = 'anon', delivery, 
   const ext = { 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/avif': '.avif' }[contentType] || '.jpg';
   const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
   const ms = Date.now() - t0;
-  log.info({ width, height, model: cfg.model, seed, bytes: buffer.length, ms }, 'görsel üretildi');
+  log.info({ endpoint, width, height, model: cfg.model, seed, bytes: buffer.length, ms }, 'görsel üretildi');
   onProgress?.({ step: 'pollinations_fetch', ms });
 
-  // Teslim biçimi — deliverArtifact ile aynı anlambilim
-  const mode = ['url', 'base64', 'file', 'both'].includes(delivery) ? delivery : config.artifact.delivery;
+  // Teslim biçimi — deliverArtifact ile aynı anlambilim.
+  // Tokenlı (gen) modda url'nin anahtarsız dışarıdan bir değeri yok → url istense bile persist et.
+  let mode = ['url', 'base64', 'file', 'both'].includes(delivery) ? delivery : config.artifact.delivery;
+  let deliveryNote;
+  if (tokenMode && mode === 'url') {
+    mode = 'file';
+    deliveryNote = `url→file: anahtarlı endpoint URL'si dışarıdan anahtarsız okunamaz, görsel kalıcı depolandı`;
+  }
   const out = {
     delivery: mode,
     source: 'pollinations',
@@ -158,7 +171,7 @@ export async function pollinationsGenerate(params, { taskId = 'anon', delivery, 
     sha256,
   };
   if (mode === 'url') {
-    out.image_url = url; // CDN'de cache'li kalır; tekrar indirilebilir
+    out.image_url = url; // anon mod: CDN'de cache'li kalır; tekrar indirilebilir
   } else {
     const persisted = persistArtifact({ buffer, contentType, sha256, ext }, { taskId });
     out.image_file = { url: persisted.url, path: persisted.path, filename: persisted.filename };
@@ -172,6 +185,7 @@ export async function pollinationsGenerate(params, { taskId = 'anon', delivery, 
       provider: 'pollinations',
       task_id: taskId,
       elapsed_ms: ms,
+      endpoint,
       model: cfg.model,
       width,
       height,
@@ -179,6 +193,7 @@ export async function pollinationsGenerate(params, { taskId = 'anon', delivery, 
       aspect_ratio: params.aspectRatio,
       prompt_chars: promptEtkin.length,
       negative_prompt_ignored: Boolean(params.negativePrompt),
+      delivery_note: deliveryNote,
       final_url: url,
     },
   };
