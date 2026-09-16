@@ -1029,15 +1029,17 @@ player.src = d.link;   // direkt CDN — hızlı akar</pre>
 
 <div class="kart" style="border-color:#2dd4bf55">
 <span class="yol">🤖 Arena — AI Görsel Üretimi</span><span class="etiket get">GET</span><span class="etiket post">POST</span>
-<p class="acik"><b>arena-proxy</b> köprüsü (Playwright/Chromium). Prompt yaz, görsel üret. Bu uçlar
-<code>arena</code> sağlayıcısına izinli keylerde çalışır (ana sayfada 🤖 Arena çipini seç).</p>
+<p class="acik"><b>arena-proxy</b> köprüsü. <b>Tarayıcısız ve hızlı</b> (5-20 sn): <code>auto</code> zinciri
+önce <b>Pollinations Seed</b>'e (filigransız 1024px), kotası biterse <b>OVHcloud SDXL</b>'e düşer — sen fark etmezsin.
+Bu uçlar <code>arena</code> sağlayıcısına izinli keylerde çalışır (ana sayfada 🤖 Arena çipini seç).</p>
 <pre>GET  /api/v1/arena/gorsel?prompt=okyanusta köpek balığı&mod=indir&key=sk-...
-POST /api/v1/arena/gorsel  {"prompt":"...","aspect_ratio":"16:9","style":"photographic"}
-GET  /api/v1/arena/durum?key=sk-...          → arena-proxy bağlantı/sağlık durumu
+POST /api/v1/arena/gorsel  {"prompt":"...","aspect_ratio":"16:9","style":"photographic","saglayici":"auto"}
+GET  /api/v1/arena/durum?key=sk-...          → köprü sağlığı + aktif sağlayıcı + zincir bilgisi
 GET  /api/v1/arena/sonuc/{is_id}?key=sk-...  → asenkron iş durumu</pre>
-<p class="acik"><b>mod:</b> <code>url</code> (302 → CDN linki, varsayılan) · <code>json</code> · <code>indir</code> (görseli bu sunucudan geçirir, &lt;img src&gt; için ideal) · <code>base64</code>.
+<p class="acik"><b>mod:</b> <code>url</code> (302 → görsel linki, varsayılan) · <code>json</code> · <code>indir</code> (görseli bu sunucudan geçirir, &lt;img src&gt; için ideal) · <code>base64</code>.<br>
+<b>saglayici:</b> <code>auto</code> (varsayılan, zincir) · <code>pollinations</code> (flux, en iyi estetik) · <code>ovh</code> (SDXL yedeği, yalnız 1024x1024) · <code>arena</code> (tarayıcı, eski).<br>
 <b>Diğer:</b> <code>&amp;oran=16:9</code> · <code>&amp;stil=cinematic</code> · <code>&amp;negatif=blurry</code> · <code>&amp;bekleme=0</code> (asenkron) · <code>&amp;dosya=1</code> (indirme olarak sun).</p>
-<pre>→ {"ok":true,"gorsel_url":"https://cdn...","gorunum_url":".../api/v1/arena/gorsel?...&amp;mod=indir","boyut":3391221,"sure_ms":4820}</pre>
+<pre>→ {"ok":true,"gorsel_url":"http://52.188.9.53:8080/files/artifacts/...jpg","saglayici":"pollinations","fallback":null,"boyut":150478,"sure_ms":10361}</pre>
 </div>
 
 <footer>🎵 Şarkı API v2.0 — key yönetimi + kalıcı depolama • Kişisel kullanım</footer>

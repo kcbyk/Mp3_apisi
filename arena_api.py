@@ -13,11 +13,14 @@ Neden ayrı servis?
   HTTP üzerinden bağlanır (tek sorumluluk ilkesi).
 
 Render → Environment değişkenleri:
-  ARENA_API_URL   arena-proxy adresi  (örn. https://arena-proxy-xxxx.onrender.com)
-  ARENA_API_KEY   arena-proxy API anahtarı  (arena-proxy'deki API_KEYS değeri)
+  ARENA_API_URL   arena-proxy adresi  (örn. https://arena-proxy-xxxx.onrender.com veya http://VM_IP:8080)
+  ARENA_API_KEY   arena-proxy API anahtarı  (arena-proxy'deki API_KEYS değeri; AUTH kapalıysa boş kalabilir)
   ARENA_TIMEOUT   üretim için üst süre, saniye (varsayılan 150 — soğuk başlangıç payı)
   ARENA_DENEME    ağ hatasında deneme sayısı (varsayılan 2)
   ARENA_DELIVERY  varsayılan teslim biçimi: url | file | base64 | both (varsayılan url)
+  ARENA_PROVIDER  varsayılan görsel sağlayıcı: pollinations | ovh | auto | arena (varsayılan auto)
+                  auto = pollinations seed biterse OVH SDXL'e, o da düşerse anon'a
+                  otomatik geçer (kota patlamalarına karşı zincir — arena-proxy v2026-09-16+)
 
 Kurulum adımları: ARENA_KURULUM.md
 """
@@ -44,6 +47,7 @@ def _cfg():
         "timeout": max(20, int(os.environ.get("ARENA_TIMEOUT", "150") or 150)),
         "deneme": max(1, int(os.environ.get("ARENA_DENEME", "2") or 2)),
         "delivery": (os.environ.get("ARENA_DELIVERY") or "url").strip() or "url",
+        "provider": (os.environ.get("ARENA_PROVIDER") or "auto").strip() or "auto",
     }
 
 
@@ -143,6 +147,7 @@ def _arena_cagri(veri, cfg, asenkron=False):
         "aspect_ratio": veri.get("aspect_ratio", "1:1"),
         "style": veri.get("style", ""),
         "delivery": veri.get("delivery") or cfg["delivery"],
+        "provider": veri.get("provider") or cfg["provider"],   # pollinations | ovh | auto | arena
     }
     if asenkron:
         govde["async"] = True
@@ -202,6 +207,8 @@ def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
                 "arena_url": cfg["url"],
                 "arena_anahtar_ayarli": bool(cfg["key"]),
                 "varsayilan_teslim": cfg["delivery"],
+                "varsayilan_saglayici": cfg["provider"],
+                "proxy_saglayicisi": (saglik or {}).get("image_provider"),
                 "timeout_sn": cfg["timeout"],
                 "arena": saglik,
             }
@@ -239,6 +246,7 @@ def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
             "aspect_ratio": d.get("aspect_ratio") or d.get("oran") or "1:1",
             "style": d.get("style") or d.get("stil") or "",
             "delivery": d.get("delivery"),
+            "provider": d.get("provider") or d.get("saglayici"),
         }
         asenkron = bool(d.get("async")) or d.get("bekleme") == 0
         cfg = _cfg()
@@ -270,6 +278,7 @@ def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
           oran            : 1:1 | 16:9 | 9:16 ...   (aspect_ratio)
           stil            : cinematic, photographic ...
           mod             : url (302 yönlendirme, varsayılan) | json | indir | base64
+          saglayici       : pollinations | ovh | auto (env: ARENA_PROVIDER) | arena
           ham             : 1 → base64 modunda yalnız base64 gövde döner
           dosya           : 1 → indir modunda tarayıcıda indirme olarak sunulur
           bekleme         : 0 → asenkron başlat, iş kimliği döner
@@ -294,6 +303,7 @@ def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
             "aspect_ratio": a.get("oran") or a.get("aspect_ratio") or "1:1",
             "style": _duzelt(a.get("stil") or a.get("style") or ""),
             "delivery": a.get("delivery"),
+            "provider": a.get("saglayici") or a.get("provider"),
         }
         asenkron = a.get("bekleme") == "0" or a.get("async") in ("1", "true")
         cfg = _cfg()
@@ -441,7 +451,8 @@ def _zenginlestir(cevap, veri):
     Arena alanları korunur; üzerine kullanışlı kısayollar eklenir.
     """
     # Asenkron yanıtta iş kimliği kök seviyededir (job_id), senkron yanıtta meta.task_id
-    is_id = (cevap.get("meta") or {}).get("task_id") or cevap.get("job_id")
+    meta = cevap.get("meta") or {}
+    is_id = meta.get("task_id") or cevap.get("job_id")
     kuyrukta = cevap.get("status") == "queued"
 
     z = {
@@ -459,9 +470,12 @@ def _zenginlestir(cevap, veri):
         "teslim": cevap.get("delivery"),
         "prompt": veri["prompt"],
         "oran": veri.get("aspect_ratio"),
+        "saglayici": meta.get("provider"),           # kazanan sağlayıcı (auto zincirinde gerçek)
+        "fallback": meta.get("fallback_attempts"),   # zincir izleri (varsa)
+        "not": meta.get("delivery_note") or meta.get("size_note"),
         "arena_meta": {
-            "adimlar": (cevap.get("meta") or {}).get("steps"),
-            "context_yeniden": (cevap.get("meta") or {}).get("reused_context"),
+            "adimlar": meta.get("steps"),
+            "context_yeniden": meta.get("reused_context"),
         },
     }
     if cevap.get("dry_run") or (cevap.get("meta") or {}).get("dry_run"):

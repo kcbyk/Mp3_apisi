@@ -82,7 +82,23 @@ test("mod=json → üretim başarılı", r.status_code == 200 and d.get("ok"), f
 test("Görsel URL'i döndü", bool(d.get("gorsel_url")), str(d.get("gorsel_url"))[:58])
 test("Türkçe karakterler korundu (UTF-8)", "köpek balığı" in d.get("prompt", ""), d.get("prompt", "")[:40])
 test("gorunum_url (img src) üretildi", "/api/v1/arena/gorsel?" in (d.get("gorunum_url") or "") and "mod=indir" in (d.get("gorunum_url") or ""))
-test("Arena meta (adımlar) geldi", bool((d.get("arena_meta") or {}).get("adimlar")))
+# 6b) Yeni (2026-09-16): sağlayıcı bilgisi yanıtta görünür — auto zinciri birini seçer
+test("Sağlayıcı alanı (auto → kazanan) yanıtta", d.get("saglayici") in ("pollinations", "ovh", "arena"),
+     f"saglayici={d.get('saglayici')}")
+
+# 6c) İstek bazlı sağlayıcı seçimi: ovh zorlanır
+r = g("/api/v1/arena/gorsel", prompt="kuzey ışıkları altında dağ gölü", mod="json", oran="1:1", saglayici="ovh")
+d = r.json()
+test("saglayici=ovh zorlaması çalışıyor", r.status_code == 200 and d.get("ok") and d.get("saglayici") == "ovh",
+     f"saglayici={d.get('saglayici')} not={str(d.get('not'))[:50]}")
+test("OVH çıktısı 1024x1024 (bilinen sınır)", (d.get("gorsel_url") or "") != "")
+
+# 6d) Sağlık ucu sağlayıcı bilgisini de döner
+r = g("/api/v1/arena/durum")
+d = r.json()
+test("durum: varsayılan sağlayıcı + proxy sağlayıcısı görünür",
+     bool(d.get("varsayilan_saglayici")) and (d.get("proxy_saglayicisi") or d.get("ok") is False) is not None,
+     f"varsayilan={d.get('varsayilan_saglayici')} proxy={d.get('proxy_saglayicisi')}")
 
 # 7) mod=indir → görsel baytları bu sunucudan geçer
 r = g("/api/v1/arena/gorsel", prompt="köpek balığı yakın plan", mod="indir", oran="1:1")
