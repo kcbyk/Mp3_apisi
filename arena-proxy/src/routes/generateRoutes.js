@@ -116,7 +116,8 @@ router.get(
   '/debug/screenshot',
   asyncHandler(async (req, res) => {
     const n = Math.max(1, Math.min(20, Number(req.query.n) || 1));
-    const dir = config.paths?.screenshotDir || path.join(ROOT_DIR, 'data', 'screenshots');
+    const dir =
+      config.target?.screenshotDir || config.paths?.screenshotDir || path.join(ROOT_DIR, 'data', 'screenshots');
     let dosyalar = [];
     try {
       dosyalar = fs
