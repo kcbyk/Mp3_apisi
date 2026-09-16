@@ -189,14 +189,20 @@ async function cerezTercihDiyaloguZorlaKapat(page) {
     const sonuc = await page
       .evaluate((katman) => {
         const gorunur = (e) => !!e && e.offsetParent !== null && e.getBoundingClientRect().width > 1;
-        const dialogVar = [...document.querySelectorAll('div,section,aside,form')].some(
-          (e) => gorunur(e) && /manage cookie preferences|this website uses cookies|accept cookies/i.test((e.innerText || '').slice(0, 300)),
-        );
+        const diyalogMetni = /manage cookie preferences|this website uses cookies|accept cookies|terms of use|privacy policy|by clicking .?agree|i understand/i;
+        const dialogVar = [...document.querySelectorAll("[role='dialog'],[role='alertdialog'],[aria-modal='true'],div,section,aside,form")]
+          .filter(gorunur)
+          .some((e) => {
+            const t = (e.innerText || '').slice(0, 400);
+            return diyalogMetni.test(t);
+          });
         if (!dialogVar) return { kapandi: true, tiklanan: null };
 
+        // SIRA ÖNEMLİ: arena.ai önce şartları ("Agree") onaylatmadan
+        // "Save Preferences" düğmesini ETKİNLEŞTİRMİYOR (canlı bulgu 2026-09-16).
         const oncelik = [
-          'accept cookies', 'accept all cookies', 'accept all', 'kabul et', 'agree',
-          'i understand', 'i agree', 'save preferences', 'kaydet', 'got it',
+          'agree', 'i agree', 'i understand', 'accept cookies', 'accept all cookies',
+          'accept all', 'kabul et', 'save preferences', 'kaydet', 'accept', 'got it',
           'manage cookies', 'cancel', 'iptal', 'close', 'dismiss', 'kapat',
         ];
         const butonlar = [...document.querySelectorAll('button,[role=button]')].filter((b) => gorunur(b) && !b.disabled);
@@ -306,14 +312,20 @@ async function cerezOnayiniKur(page) {
   if (await cerezVar()) return { kuruldu: true, zatenVardi: true };
 
   const temel = `${config.target.baseUrl}${config.target.generatePath || '/'}`;
-  for (const url of [`${temel}?manage-cookies=true`, temel]) {
+  for (const url of [`${temel}?manage-cookies=true`, temel, `${temel}?manage-cookies=true`]) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch(() => {});
     await microPause(2.5);
-    // Diyalog penceresini zorla kapat (Save Preferences / Accept Cookies / Escape)
-    await cerezTercihDiyaloguZorlaKapat(page).catch(() => {});
-    await jsButonTikla(page, ['Save Preferences', 'Accept Cookies', 'Accept All Cookies', 'Kaydet']).catch(() => {});
-    await microPause(1.5);
-    if (await cerezVar()) return { kuruldu: true, url: page.url() };
+    for (let tur = 1; tur <= 3; tur += 1) {
+      // (a) Şartlar katmanı açıksa önce onu onayla (Save Preferences bu yüzden kilitli)
+      await jsButonTikla(page, ['Agree', 'I Agree', 'I understand', 'Accept Cookies', 'Accept All Cookies']).catch(() => {});
+      await microPause(1.2);
+      // (b) Tercihleri kaydet
+      await jsButonTikla(page, ['Save Preferences', 'Accept Cookies', 'Accept All Cookies', 'Kaydet']).catch(() => {});
+      // (c) Hâlâ açıksa klavye yedeği ("Or hit Enter on your keyboard to agree")
+      await page.keyboard.press('Enter').catch(() => {});
+      await microPause(1.5);
+      if (await cerezVar()) return { kuruldu: true, tur, url: page.url() };
+    }
   }
   return { kuruldu: await cerezVar() };
 }
