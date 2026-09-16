@@ -292,6 +292,32 @@ async function cerezTercihDiyaloguAcikMi(page) {
     .catch(() => false);
 }
 
+/**
+ * Çerez onayını KALICI olarak kur.
+ *
+ * Canlı bulgu (2026-09-16): arena.ai, çerez tercihi kaydedilmemişse besteyi
+ * (composer) görünür ama ETKİSİZ bırakıyor — Enter/tıklama gönderim yapmıyor.
+ * Çözüm: bir kez "Save Preferences" / "Accept Cookies" uygula, uygulamanın
+ * yazdığı `cookie-preferences` çerezini yakala ve oturum dosyasına sakla.
+ */
+async function cerezOnayiniKur(page) {
+  const cerezVar = async () =>
+    (await page.context().cookies(config.target.baseUrl)).some((c) => c.name === 'cookie-preferences');
+  if (await cerezVar()) return { kuruldu: true, zatenVardi: true };
+
+  const temel = `${config.target.baseUrl}${config.target.generatePath || '/'}`;
+  for (const url of [`${temel}?manage-cookies=true`, temel]) {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch(() => {});
+    await microPause(2.5);
+    // Diyalog penceresini zorla kapat (Save Preferences / Accept Cookies / Escape)
+    await cerezTercihDiyaloguZorlaKapat(page).catch(() => {});
+    await jsButonTikla(page, ['Save Preferences', 'Accept Cookies', 'Accept All Cookies', 'Kaydet']).catch(() => {});
+    await microPause(1.5);
+    if (await cerezVar()) return { kuruldu: true, url: page.url() };
+  }
+  return { kuruldu: await cerezVar() };
+}
+
 async function onayKapisiAcikMi(page) {
   const metinKapisi = await page
     .evaluate(() => {
@@ -794,6 +820,7 @@ export async function runGeneration({ page, context }, params, { signal, taskId 
     await step('consent', () => dismissConsent(page));
     await step('session_check', () => assertSessionValid(page));
     await step('open_generator', () => ensureGeneratorOpen(page));
+    await step('cookie_consent', () => cerezOnayiniKur(page));
 
     // 2) Parametreler
     await step('aspect_ratio', async () => {
@@ -877,6 +904,7 @@ function dryRunResult(norm, taskId, t0) {
 
 export {
   saveErrorScreenshot,
+  cerezOnayiniKur,
   gotoWithChallengeCheck,
   dismissConsent,
   assertSessionValid,

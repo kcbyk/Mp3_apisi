@@ -20,6 +20,7 @@ import {
   dismissConsent,
   girisDuvariniTespit,
   cerezTercihDiyaloguAcikMi,
+  cerezOnayiniKur,
 } from '../scrapers/arenaScraper.js';
 import { AppError, ValidationError } from '../errors.js';
 import { logger } from '../utils/logger.js';
@@ -231,6 +232,8 @@ router.post(
         .catch(() => []);
 
       if (gonder) {
+        rapor.onayKurulumu = await cerezOnayiniKur(page).catch((e) => ({ hata: String(e.message).slice(0, 100) }));
+        rapor.onayCerezi = (await page.context().cookies()).filter((c) => c.name === 'cookie-preferences').length;
         const girdi = await page.locator("textarea[placeholder^='Describe the image'], textarea[placeholder*='Describe the image']").first();
         rapor.girdiVar = await girdi.count();
         await girdi.fill(prompt).catch((e) => (rapor.doldurmaHatasi = String(e.message).slice(0, 120)));
