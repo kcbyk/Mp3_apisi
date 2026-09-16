@@ -311,8 +311,46 @@ export async function oturumuYenile({ zorla = false, esikDk, taskId } = {}) {
 
 /**
  * Arka plan bekçisi: access_token dolmadan yeniler → oturum zinciri hiç kopmaz.
- * Not: interval unref edilir; testlerin/sürecin kapanmasını engellemez.
+ * Kendini yeniden planlayan bir zamanlayıcıdır:
+ *   - başarılı yenileme / jeton taze → normal periyot (varsayılan 25 dk)
+ *   - başarısız yenileme → üstel geri çekilme (en fazla 6 saat) — oturum gerçekten
+ *     düşmüşse sürekli tarayıcı açıp kaynak tüketmesin.
+ * Not: zamanlayıcı unref edilir; testlerin/sürecin kapanmasını engellemez.
  */
+const AZAMI_GERI_CEKILME_MS = 6 * 60 * 60 * 1000;
+let ardisikHata = 0;
+
+function planla(ms) {
+  zamanlayici = setTimeout(bekciTik, ms);
+  zamanlayici.unref?.();
+  return zamanlayici;
+}
+
+async function bekciTik() {
+  const d = oturumDurumu();
+  if (d.ok && d.kalanDk !== null && d.kalanDk > config.session.refreshThresholdMinutes) {
+    ardisikHata = 0;
+    log.debug({ kalanDk: d.kalanDk }, 'oturum bekçisi: jeton taze');
+    planla(config.session.keepAliveMinutes * 60_000);
+    return;
+  }
+  log.info({ kalanDk: d.kalanDk ?? null, ardisikHata }, 'oturum bekçisi: yenileme başlıyor');
+  const sonuc = await oturumuYenile({ taskId: 'keepalive' }).catch((e) => ({ ok: false, sebep: String(e.message) }));
+  const taban = config.session.keepAliveMinutes * 60_000;
+  if (sonuc?.ok) {
+    ardisikHata = 0;
+    planla(taban);
+    return;
+  }
+  ardisikHata = Math.min(ardisikHata + 1, 5);
+  const bekle = Math.min(taban * 2 ** ardisikHata, AZAMI_GERI_CEKILME_MS);
+  log.warn(
+    { ardisikHata, bekleDk: Math.round(bekle / 60000), sebep: sonuc?.sebep ?? 'bilinmiyor' },
+    'oturum yenilenemedi → geri çekilme (yeni çerez gerekli olabilir)',
+  );
+  planla(bekle);
+}
+
 export function oturumBekcisiniBaslat() {
   if (zamanlayici) return zamanlayici;
   const dk = config.session.keepAliveMinutes;
@@ -320,27 +358,15 @@ export function oturumBekcisiniBaslat() {
     log.info({}, 'oturum bekçisi kapalı (SESSION_KEEPALIVE_MINUTES=0)');
     return null;
   }
-  const periyotMs = dk * 60_000;
-  zamanlayici = setInterval(() => {
-    const d = oturumDurumu();
-    if (d.ok && d.kalanDk !== null && d.kalanDk > config.session.refreshThresholdMinutes) {
-      log.debug({ kalanDk: d.kalanDk }, 'oturum bekçisi: jeton taze, işlem yok');
-      return;
-    }
-    log.info({ kalanDk: d.kalanDk ?? null }, 'oturum bekçisi: yenileme başlıyor');
-    oturumuYenile({ taskId: 'keepalive' }).catch((e) =>
-      log.error({ err: String(e.message).slice(0, 120) }, 'oturum bekçisi hatası'),
-    );
-  }, periyotMs);
-  zamanlayici.unref?.();
   log.info(
     { periyotDk: dk, esikDk: config.session.refreshThresholdMinutes, kalici: config.session.persist },
     'oturum bekçisi başladı',
   );
-  return zamanlayici;
+  // Açılışta hemen değil, kısa bir gecikmeyle ilk kontrol (önyükleme yükünü artırmasın)
+  return planla(Math.min(30_000, dk * 60_000));
 }
 
 export function oturumBekcisiniDurdur() {
-  if (zamanlayici) clearInterval(zamanlayici);
+  if (zamanlayici) clearTimeout(zamanlayici);
   zamanlayici = null;
 }
