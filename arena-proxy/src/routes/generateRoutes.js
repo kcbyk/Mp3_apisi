@@ -10,7 +10,7 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { generateAsset, selectorStats } from '../services/assetService.js';
 import { browserManager } from '../automation/browserManager.js';
 import { sessionStore, normalizeStorageState } from '../automation/sessionStore.js';
-import { loadSelectors } from '../scrapers/arenaScraper.js';
+import { loadSelectors, gotoWithChallengeCheck, dismissConsent, girisDuvariniTespit } from '../scrapers/arenaScraper.js';
 import { AppError, ValidationError } from '../errors.js';
 import { logger } from '../utils/logger.js';
 import { jobStore } from '../services/jobStore.js';
@@ -131,6 +131,49 @@ router.get(
         value_preview: `${String(c.value).slice(0, 4)}***${String(c.value).slice(-2)} (${String(c.value).length} char)`,
       })),
       origins: state.origins.map((o) => ({ origin: o.origin, localStorage_keys: o.localStorage.map((i) => i.name) })),
+    });
+  }),
+);
+
+/* -------------------- GET /session-dogrula (canlı oturum testi) ------------ */
+/**
+ * Gerçek tarayıcıyla hedefe gider ve oturumun geçerli olup olmadığını söyler.
+ * Amaç: 10 dakikalık üretim denemesi yerine saniyeler içinde net cevap almak.
+ */
+router.get(
+  '/session-dogrula',
+  asyncHandler(async (req, res) => {
+    const t0 = Date.now();
+    const lease = await browserManager.acquirePage({ taskId: 'session-check' });
+    let duvar = { duvar: true, sebep: 'kontrol tamamlanamadı' };
+    let ayrinti = {};
+    try {
+      await gotoWithChallengeCheck(lease.page, `${config.target.baseUrl}${config.target.generatePath}`).catch(() => {});
+      await dismissConsent(lease.page).catch(() => {});
+      duvar = await girisDuvariniTespit(lease.page);
+      ayrinti = await lease.page
+        .evaluate(() => {
+          const gorunur = (e) => e.getBoundingClientRect().width > 1;
+          const metinler = [...document.querySelectorAll('button,a')]
+            .filter(gorunur)
+            .map((e) => (e.innerText || '').trim())
+            .filter((t) => /log ?in|log ?out|sign ?in|sign ?out/i.test(t))
+            .slice(0, 6);
+          const cerezAdlari = document.cookie.split(';').map((c) => c.trim().split('=')[0]).filter(Boolean);
+          return { oturumButonlari: metinler, cerezSayisi: cerezAdlari.length, cerezler: cerezAdlari.slice(0, 14) };
+        })
+        .catch(() => ({}));
+    } finally {
+      await lease.release({ ok: !duvar.duvar }).catch(() => {});
+    }
+    res.status(duvar.duvar ? 200 : 200).json({
+      success: true,
+      oturum_gecerli: !duvar.duvar,
+      sebep: duvar.duvar ? duvar.sebep : 'oturum geçerli görünüyor',
+      url: lease.page?.url?.() ?? `${config.target.baseUrl}${config.target.generatePath}`,
+      hedef: config.target.baseUrl,
+      sure_ms: Date.now() - t0,
+      ...ayrinti,
     });
   }),
 );

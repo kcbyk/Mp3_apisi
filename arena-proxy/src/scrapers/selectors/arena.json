@@ -1,7 +1,7 @@
 {
   "$comment": "Resilient selector registry. Her anahtar bir STRATEJİ ZİNCİRİDİR; sırayla denenir, ilk çalışan kazanır. Zincirin BAŞINDAKİ kayıtlar gerçek arena.ai DOM'undan (2026-09-16 canlı keşif), sonrakiler jenerik/sahte hedef platform seçicileridir. Hedef DOM değiştiğinde sadece bu dosyayı güncelle — kod değişmez. Hangi stratejinin tuttuğunu görmek için: GET /api/v1/debug/selectors",
   "name": "arena",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "updated_at": "2026-09-16",
   "consentBanner": [
     {
@@ -68,6 +68,17 @@
       "value": "[aria-label='Accept cookies'], [aria-label='accept']",
       "nth": 0,
       "optional": true
+    },
+    {
+      "by": "text",
+      "value": "hit Enter on your keyboard to agree",
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "[role=dialog] button:has-text('Agree')",
+      "nth": 0,
+      "optional": true
     }
   ],
   "loginWall": [
@@ -102,6 +113,28 @@
     {
       "by": "testid",
       "value": "login-form",
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Continue with Google",
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Continue with email",
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "a[href*='/signin'], a[href*='/sign-up']",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Log In",
       "optional": true
     }
   ],

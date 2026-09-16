@@ -140,7 +140,78 @@ async function gotoWithChallengeCheck(page, url, { signal } = {}) {
  * (a) "Agree/Got it" butonuna tıklanır, (b) olmazsa Enter'a basılır ve
  * (c) kapının gerçekten kaybolduğu doğrulanır.
  */
-const ONAY_KAPISI_RE = /hit Enter on your keyboard to agree|By using Arena|reCAPTCHA and the Google/i;
+const ONAY_KAPISI_RE = /hit Enter on your keyboard to agree|By using Arena|reCAPTCHA and the Google|Terms of Use & Privacy Policy/i;
+
+/**
+ * Giriş duvarı (oturum geçersiz) işaretleri — arena.ai canlı gözleminden:
+ * onay kapısı kabul edildikten sonra "Continue with Google / Continue with email"
+ * diyaloğu çıkar ve /v3/signin/* sayfasına yönlendirilir.
+ */
+const GIRIS_DUVARI_METIN_RE = /Continue with Google|Continue with email|Sign in to continue|Enter your email/i;
+const GIRIS_DUVARI_URL_RE = /\/signin|\/sign-up|\/login|nextjs-api\/sign-up/i;
+
+/**
+ * Radix modal'ları pointer olaylarını emebildiği için (Playwright "subtree
+ * intercepts pointer events" verir) butona doğrudan DOM click() ile basar.
+ */
+async function jsButonTikla(page, adlar) {
+  return page
+    .evaluate((isimler) => {
+      const hedefler = isimler.map((x) => x.toLowerCase());
+      const btn = [...document.querySelectorAll('button,[role=button]')].find((b) => {
+        const t = (b.innerText || b.getAttribute('aria-label') || '').trim().toLowerCase();
+        return t && b.getBoundingClientRect().width > 1 && !b.disabled && hedefler.includes(t);
+      });
+      if (!btn) return null;
+      btn.scrollIntoView?.({ block: 'center' });
+      btn.click();
+      return (btn.innerText || '').trim().slice(0, 30);
+    }, adlar)
+    .catch(() => null);
+}
+
+/**
+ * Oturumun hâlâ geçerli olup olmadığını tespit eder.
+ * @returns {Promise<{duvar:boolean, sebep:string}>}
+ */
+async function girisDuvariniTespit(page) {
+  const url = page.url();
+  if (GIRIS_DUVARI_URL_RE.test(url)) return { duvar: true, sebep: `giriş sayfasına yönlendirildi (${url.slice(0, 70)})` };
+
+  const metin = await page
+    .evaluate(() => {
+      const d = [...document.querySelectorAll('[role=dialog],[role=alertdialog]')].map((x) => x.innerText).join(' ');
+      return { diyalog: d.slice(0, 400), govde: document.body.innerText.slice(0, 6000) };
+    })
+    .catch(() => ({ diyalog: '', govde: '' }));
+  if (GIRIS_DUVARI_METIN_RE.test(metin.diyalog)) return { duvar: true, sebep: 'giriş diyaloğu çıktı (Continue with Google/email)' };
+  if (GIRIS_DUVARI_METIN_RE.test(metin.govde)) return { duvar: true, sebep: 'sayfa giriş seçenekleri gösteriyor' };
+
+  const ipucu = await page
+    .evaluate(() => {
+      const gorunur = (e) => e.getBoundingClientRect().width > 1;
+      const girisVar = [...document.querySelectorAll('button,a')].some(
+        (x) => gorunur(x) && /^\s*log ?in\s*$/i.test((x.innerText || '').trim()),
+      );
+      const cikisVar = [...document.querySelectorAll('button,a')].some(
+        (x) => gorunur(x) && /log ?out|sign ?out|çıkış yap/i.test(x.innerText || ''),
+      );
+      return { girisVar, cikisVar };
+    })
+    .catch(() => ({ girisVar: false, cikisVar: false }));
+  if (ipucu.girisVar && !ipucu.cikisVar) return { duvar: true, sebep: 'sayfa "Log In" gösteriyor (oturum düşmüş)' };
+
+  return { duvar: false, sebep: '' };
+}
+
+function oturumHatasi(sebep) {
+  return new SessionError(
+    `arena.ai oturumu geçersiz — ${sebep}. Yeni çerez gerekli (SESSION_STATE_B64 / data/sessions/arena.json). ` +
+      'Not: arena.ai yenileme jetonunu döndürdüğü için çerez, kaynak tarayıcı kullanıldıkça geçersizleşir; ' +
+      'üretimden hemen önce taze dışa aktarım yapın (ARENA_KURULUM.md §2).',
+    { detected: true, sebep },
+  );
+}
 
 async function onayKapisiAcikMi(page) {
   return page
@@ -163,9 +234,20 @@ async function dismissConsent(page) {
       optional: true,
     });
     if (btn) {
-      await humanClick(btn).catch(() => {});
+      await humanClick(btn).catch(async () => {
+        // Radix modalı pointer olaylarını emiyorsa DOM click() ile dene
+        await jsButonTikla(page, ['Agree', 'I Agree', 'Accept', 'Got it', 'Close']).catch(() => {});
+      });
       await microPause(1);
+    } else {
+      // Kapı metni var ama bilinen buton bulunamadı → doğrudan JS tıklama
+      await jsButonTikla(page, ['Agree', 'I Agree', 'Accept', 'Got it']).catch(() => {});
+      await microPause(0.6);
     }
+
+    // Kapı kapandıysa gerçekten oturum var mı? (canlı bulgu: kapıdan sonra giriş duvarı)
+    const duvar = await girisDuvariniTespit(page);
+    if (duvar.duvar) throw oturumHatasi(duvar.sebep);
 
     if (!(await onayKapisiAcikMi(page))) return true;
 
@@ -182,12 +264,16 @@ async function dismissConsent(page) {
     if (!(await onayKapisiAcikMi(page))) return true;
   }
 
+  const duvarSon = await girisDuvariniTespit(page);
+  if (duvarSon.duvar) throw oturumHatasi(duvarSon.sebep);
   logger.warn?.({ mod: 'arenaScraper' }, 'onay kapısı kapanmadı — gönderim adımında tekrar denenecek');
   return false;
 }
 
 async function assertSessionValid(page) {
   const selectors = loadSelectors();
+
+  // (a) yapılandırılmış loginWall seçicileri
   const wall = await resolveSelector(page, selectors.loginWall, {
     key: 'loginWall',
     timeout: 1200,
@@ -200,6 +286,10 @@ async function assertSessionValid(page) {
       { detected: true },
     );
   }
+
+  // (b) arena.ai'ye özel canlı işaretler (giriş diyaloğu / "Log In" / /signin yönlendirmesi)
+  const duvar = await girisDuvariniTespit(page);
+  if (duvar.duvar) throw oturumHatasi(duvar.sebep);
 }
 
 async function ensureGeneratorOpen(page) {
@@ -688,4 +778,4 @@ function dryRunResult(norm, taskId, t0) {
   };
 }
 
-export { saveErrorScreenshot, gotoWithChallengeCheck, dismissConsent, assertSessionValid, ensureGeneratorOpen };
+export { saveErrorScreenshot, gotoWithChallengeCheck, dismissConsent, assertSessionValid, ensureGeneratorOpen, girisDuvariniTespit };

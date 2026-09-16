@@ -136,6 +136,30 @@ npm run session:env -- --out session.env
 Oturum düşerse: `POST /api/v1/session/import` (arena-proxy) veya yeni base64 üretip env'i
 güncelle → Render → Manual Deploy.
 
+#### Oturumu saniyeler içinde doğrula (canlı test)
+
+```bash
+curl "https://arena-proxy.onrender.com/api/v1/session-dogrula" -H "x-api-key: $ARENA_KEY"
+# → {"oturum_gecerli":true,"sebep":"oturum geçerli görünüyor","url":"...","sure_ms":3500}
+# → {"oturum_gecerli":false,"sebep":"sayfa \"Log In\" gösteriyor (oturum düşmüş)"}
+```
+
+`oturum_gecerli:false` ise üretim isteği 10 dakika beklemez; **2-3 saniyede**
+`SESSION_INVALID` hatası döner.
+
+#### ⚠️ Çok önemli: Arena yenileme jetonunu DÖNDÜRÜR (rotation)
+
+Canlıda doğrulandı: `arena-auth-prod-v1.0` çerezindeki oturum ~2 saat çalıştıktan sonra
+geçersizleşti. Nedeni: Arena/Supabase **yenileme jetonu (refresh token) rotasyonu** yapar —
+dışa aktardığın çerezi kullanan *başka* bir tarayıcı/sekme jetonu yenilerse, senin kopyan
+geçersiz olur. Sonuç:
+
+- Çerezi, **üretim yapacağın anda** dışa aktar (eski kopyayı saklayıp sonra kullanmayı planlama).
+- Dışa aktardıktan sonra o tarayıcıda arena.ai'yi **kullanma** (her kullanım jetonu döndürür).
+- İkinci bir cihaz/sekme de jetonu döndürebilir; kritik üretimden önce `/session-dogrula` ile teyit et.
+- Arena oturumu düşürdüyse hiçbir ayar kurtarmaz; tek çözüm taze çerezdir (üretim 2-3 sn'de
+  `SESSION_INVALID` döner, uzun beklemeye girmez).
+
 ---
 
 ## 2d. arena.ai hakkında doğrulanmış teknik notlar
@@ -153,6 +177,8 @@ Bu entegrasyon sırasında **canlı arena.ai DOM'u ve ağ trafiği** incelendi:
 | Görsel kaynağı | `messages-prod.<hash>.r2.cloudflarestorage.com` (Cloudflare R2) — izin listesine eklenmiştir |
 | Yanlış eşleşme koruması | Kullanıcı avatarı (`googleusercontent.com`), logo ve üretim öncesi sayfada duran görseller aday sayılmaz (DOM temel çizgisi) |
 | Oturum | Google ile giriş yapılmış oturum gerekir; çerez tabanlıdır (localStorage gerekmez) |
+| **Giriş duvarı (canlı gözlem)** | Oturum düşünce: onay kapısı → sonra **"Continue with Google / Continue with email"** diyaloğu → `/v3/signin/*` sayfası. Bu işaretler algılanır ve istek anında `SESSION_INVALID` ile biter |
+| Radix modal tıklaması | ToS/giriş modalları pointer olaylarını emer (Playwright: *subtree intercepts pointer events*). Bu yüzden "Agree" için DOM `click()` yedeği eklendi |
 
 **Doğrulama kaydı:** Gerçek arena.ai üzerinden görsel üretimi iki kez başarıyla tamamlandı
 (28 sn ve 40 sn; 1536×1024 PNG, Cloudflare R2 URL'i). Yoğun saatlerde Arena'nın "Max"
@@ -288,6 +314,7 @@ curl "https://mp3-apisi.onrender.com/api/v1/arena/sonuc/e459d79c-...?key=$K"
 | `ARTIFACT_NOT_FOUND` (502) | Hedef DOM değişmiş → arena-proxy'de `npm run session:inspect` ile selector kayıt defterini güncelle (`arena-proxy/src/scrapers/selectors/arena.json`) |
 | Bot koruması (challenge) | `USER_AGENT` + IP tutarlılığı; gerekirse konut proxy (`PROXY_ENABLED=true`) |
 | Görsel üretiliyor ama 502 | arena-proxy loglarına bak: Render → arena-proxy → Logs |
+| `SESSION_INVALID` hatası | arena.ai oturumu düşmüş. Taze Cookie-Editor JSON'u al → `SESSION_STATE_B64` güncelle → Manual Deploy. Kaynak tarayıcıda arena.ai'yi kullanmak jetonu döndürüp kopyayı geçersizleştirir (bkz. 2c) |
 | İş `kuyrukta` kalıyor | Tek context dolu → önceki iş bitmeli. `/api/v1/jobs` ile bak; takılan işi `DELETE /api/v1/jobs/<id>` ile iptal edebilirsin |
 | Uzun istek `fetch failed` ile kopuyor | Senkron yerine **asenkron** akışı kullan (bkz. 3b) |
 | İlk istek 60-90 sn | Render ücretsiz plan soğuk başlangıcı + Chromium açılışı. `PREWARM_BROWSER=true` + `/health`'i 10 dk'da bir yoklamak çözer |
