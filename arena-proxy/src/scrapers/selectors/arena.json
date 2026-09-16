@@ -5,6 +5,47 @@
   "updated_at": "2026-09-16",
   "consentBanner": [
     {
+      "by": "css",
+      "value": "[role='dialog'] button:has-text('Save Preferences')",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Save Preferences",
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "[role='dialog'] button:has-text('Cancel')",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "#onetrust-accept-btn-handler, #onetrust-pc-save-btn",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": ".onetrust-close-btn-handler",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Accept All Cookies",
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "button:has-text('Accept all')",
+      "nth": 0,
+      "optional": true
+    },
+    {
       "by": "role",
       "role": "button",
       "name": "Got it",

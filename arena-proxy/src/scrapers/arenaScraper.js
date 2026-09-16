@@ -213,13 +213,37 @@ function oturumHatasi(sebep) {
   );
 }
 
-async function onayKapisiAcikMi(page) {
+/**
+ * arena.ai çerez tercih diyaloğu ("Manage Cookie Preferences") açık mı?
+ * Canlı bulgu (2026-09-16): bu modal bestecinin üstünde duruyor ve gönder
+ * düğmesini `disabled` bırakıyor → "mesaj gönderilemedi" hatasının kök nedeni.
+ */
+async function cerezTercihDiyaloguAcikMi(page) {
   return page
+    .evaluate(() => {
+      const gorunur = (e) => !!(e && e.offsetParent !== null && e.getBoundingClientRect().width > 0);
+      const dlgler = [...document.querySelectorAll("[role='dialog'],[data-state='open'],[class*='modal' i]")].filter(gorunur);
+      if (dlgler.some((dl) => /manage cookie preferences/i.test(dl.innerText || ''))) return true;
+      // Metin tabanlı yedek: gövdede başlık varsa ve bir kaydet butonu görünüyorsa
+      if (/manage cookie preferences/i.test(document.body.innerText || '')) {
+        return [...document.querySelectorAll('button')].some(
+          (b) => gorunur(b) && /save preferences|kaydet/i.test(b.innerText || ''),
+        );
+      }
+      return false;
+    })
+    .catch(() => false);
+}
+
+async function onayKapisiAcikMi(page) {
+  const metinKapisi = await page
     .evaluate(() => {
       const t = document.body.innerText;
       return /hit Enter on your keyboard to agree/i.test(t);
     })
     .catch(() => false);
+  if (metinKapisi) return true;
+  return cerezTercihDiyaloguAcikMi(page);
 }
 
 async function dismissConsent(page) {
@@ -243,6 +267,23 @@ async function dismissConsent(page) {
       // Kapı metni var ama bilinen buton bulunamadı → doğrudan JS tıklama
       await jsButonTikla(page, ['Agree', 'I Agree', 'Accept', 'Got it']).catch(() => {});
       await microPause(0.6);
+    }
+
+    // Çerez tercih modalı hâlâ açıksa: kaydet → iptal → Escape sırasıyla zorla kapat
+    if (await cerezTercihDiyaloguAcikMi(page)) {
+      for (const yol of ['kaydet', 'iptal', 'escape']) {
+        if (yol === 'escape') {
+          await page.keyboard.press('Escape').catch(() => {});
+        } else {
+          const etiketler = yol === 'kaydet' ? ['Save Preferences', 'Accept All Cookies'] : ['Cancel', 'Close'];
+          await jsButonTikla(page, etiketler).catch(() => {});
+        }
+        await microPause(0.9);
+        if (!(await cerezTercihDiyaloguAcikMi(page))) {
+          logger.info?.({ mod: 'arenaScraper', yol }, 'çerez tercih diyaloğu kapatıldı');
+          break;
+        }
+      }
     }
 
     // Kapı kapandıysa gerçekten oturum var mı? (canlı bulgu: kapıdan sonra giriş duvarı)
@@ -530,8 +571,12 @@ async function clickGenerate(page, promptText = '') {
     timeout: config.target.stepTimeoutMs,
   });
 
+  // Canlı bulgu (2026-09-16): çerez tercih modalı gönder düğmesini kalıcı olarak
+  // `disabled` bırakıyor → gönderimden hemen önce bir kez daha kapatmayı dene.
+  if (await onayKapisiAcikMi(page).catch(() => false)) await dismissConsent(page).catch(() => {});
+
   // Buton disabled olabilir (prompt henüz React state'ine işlenmemiş)
-  const deadline = Date.now() + 8000;
+  const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     const disabled = await btn.isDisabled().catch(() => false);
     if (!disabled) break;
