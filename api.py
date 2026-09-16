@@ -1038,6 +1038,7 @@ GET  /api/v1/arena/durum?key=sk-...          → köprü sağlığı + aktif sa�
 GET  /api/v1/arena/sonuc/{is_id}?key=sk-...  → asenkron iş durumu</pre>
 <p class="acik"><b>mod:</b> <code>url</code> (302 → görsel linki, varsayılan) · <code>json</code> · <code>indir</code> (görseli bu sunucudan geçirir, &lt;img src&gt; için ideal) · <code>base64</code>.<br>
 <b>saglayici:</b> <code>auto</code> (varsayılan, zincir) · <code>pollinations</code> (flux, en iyi estetik) · <code>ovh</code> (SDXL yedeği, yalnız 1024x1024) · <code>arena</code> (tarayıcı, eski).<br>
+<b>model:</b> <code>&amp;model=openai/gpt-image-1-mini</code> (varsayılan ✨ stüdyo kalitesi, ~25sn) · <code>z-image-turbo</code> (~7sn) · <code>black-forest-labs/flux.1-schnell</code> (8sn, bol kota) · <code>microsoft/mai-image-2.5-flash</code> (18sn) — yalnız pollinations halkasında geçerli.<br>
 <b>Diğer:</b> <code>&amp;oran=16:9</code> · <code>&amp;stil=cinematic</code> · <code>&amp;negatif=blurry</code> · <code>&amp;bekleme=0</code> (asenkron) · <code>&amp;dosya=1</code> (indirme olarak sun).</p>
 <pre>→ {"ok":true,"gorsel_url":"http://52.188.9.53:8080/files/artifacts/...jpg","saglayici":"pollinations","fallback":null,"boyut":150478,"sure_ms":10361}</pre>
 </div>
