@@ -372,7 +372,29 @@ async function fillPrompts(page, { prompt, negativePrompt }) {
     key: 'promptInput',
     timeout: config.target.stepTimeoutMs,
   });
-  await humanType(promptEl, prompt);
+
+  // Üstte duran uyarı şeritleri ("Previous chat history… Got it") tıklamayı engelleyebilir
+  await dismissConsent(page).catch(() => {});
+
+  // fill() tıklama gerektirmediği için şerit/overlay engeline takılmaz; yazma hızı
+  // insan-benzeri olmadığından yalnızca yedek yol olarak humanType kullanılır.
+  let yazildi = false;
+  try {
+    await promptEl.fill(prompt, { timeout: 8000 });
+    yazildi = (await promptEl.inputValue().catch(() => '')) === prompt;
+  } catch {
+    yazildi = false;
+  }
+  if (!yazildi) {
+    try {
+      await promptEl.click({ timeout: 5000, force: true });
+      await humanType(promptEl, prompt);
+      yazildi = true;
+    } catch (err) {
+      logger.warn({ mod: 'arenaScraper', err: String(err).slice(0, 100) }, 'prompt yazılamadı — tekrar denenecek');
+      throw err;
+    }
+  }
 
   let negativeApplied = null;
   if (negativePrompt) {
