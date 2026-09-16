@@ -264,7 +264,7 @@ router.post(
         const denemeler = [];
         const dene = async (ad, fn) => {
           const once = page.url();
-          await fn().catch((e) => denemeler.push({ ad, hata: String(e.message).slice(0, 90) }));
+          await fn().catch((e) => denemeler.push({ ad, hata: String(e.message).slice(0, 400) }));
           await page.waitForTimeout(2500);
           const durum = await gonderildi();
           denemeler.push({ ad, ...durum, urlDegisti: page.url() !== once });

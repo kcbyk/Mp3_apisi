@@ -329,7 +329,12 @@ async function cerezOnayiniKur(page) {
       if (await cerezVar()) kuruldu = true;
       const acik = await blokKatmanVarMi(page);
       logger.info?.({ mod: 'arenaScraper', tur, tiklanan, cerez: kuruldu, katmanAcik: acik }, 'onay kurulumu turu');
-      if (!acik) return { kuruldu, tur, url: page.url() };
+      if (!acik) {
+        // Uygulama, onay sonrası besteyi ancak sayfa yeniden yüklenince etkinleştiriyor
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch(() => {});
+        await microPause(3);
+        return { kuruldu, tur, url: page.url(), yenilendi: true };
+      }
     }
   }
   return { kuruldu, katmanAcik: await blokKatmanVarMi(page).catch(() => null) };
