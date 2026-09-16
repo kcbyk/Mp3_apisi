@@ -253,6 +253,30 @@ print(r.json()["gorsel_url"])
 
 ---
 
+## 3b. ⚠️ Uzun üretimlerde ASENKRON mod kullanın (canlıda doğrulandı)
+
+Arena'nın "Max" modeli yoğun saatlerde **dakikalarca** sürebiliyor. Render'ın HTTP proxy'si
+tek bir isteği uzun süre boşta bekletirse bağlantıyı düşürebiliyor (canlı testte
+`fetch failed` olarak görüldü). Bu yüzden gerçek Arena üretimlerinde **asenkron akış** önerilir:
+
+```bash
+# 1) İşi başlat → hemen iş kimliği döner (202)
+curl "https://mp3-apisi.onrender.com/api/v1/arena/gorsel?prompt=altın saatte köpek balığı&bekleme=0&key=$K"
+# → {"ok":true,"durum":"kuyrukta","is_id":"e459d79c-...","sonuc_url":"/api/v1/arena/sonuc/e459d79c-..."}
+
+# 2) İşi yokla (20-30 sn'de bir) → "kuyrukta" → "bitti"
+curl "https://mp3-apisi.onrender.com/api/v1/arena/sonuc/e459d79c-...?key=$K"
+# → {"ok":true,"durum":"bitti","gorsel_url":"https://messages-prod...r2.cloudflarestorage.com/..."}
+```
+
+- Tek context (ücretsiz plan) olduğu için istekler **sıraya** girer: `/api/v1/arena/durum`
+  ve arena-proxy `/api/v1/jobs` ile kuyruk durumunu görebilirsin.
+- `durum` alanı: `kuyrukta` (sırada) → `bitti` | `hata`.
+- Senkron mod (`bekleme` yok) kısa işlerde veya hızlı modellerde kullanışlı; uzun
+  üretimlerde bağlantı kopabilir.
+
+---
+
 ## 4. Sorun giderme
 
 | Belirti | Neden / Çözüm |
@@ -264,6 +288,9 @@ print(r.json()["gorsel_url"])
 | `ARTIFACT_NOT_FOUND` (502) | Hedef DOM değişmiş → arena-proxy'de `npm run session:inspect` ile selector kayıt defterini güncelle (`arena-proxy/src/scrapers/selectors/arena.json`) |
 | Bot koruması (challenge) | `USER_AGENT` + IP tutarlılığı; gerekirse konut proxy (`PROXY_ENABLED=true`) |
 | Görsel üretiliyor ama 502 | arena-proxy loglarına bak: Render → arena-proxy → Logs |
+| İş `kuyrukta` kalıyor | Tek context dolu → önceki iş bitmeli. `/api/v1/jobs` ile bak; takılan işi `DELETE /api/v1/jobs/<id>` ile iptal edebilirsin |
+| Uzun istek `fetch failed` ile kopuyor | Senkron yerine **asenkron** akışı kullan (bkz. 3b) |
+| İlk istek 60-90 sn | Render ücretsiz plan soğuk başlangıcı + Chromium açılışı. `PREWARM_BROWSER=true` + `/health`'i 10 dk'da bir yoklamak çözer |
 | Müzik uçları yavaşladı | Arena çağrıları ayrı serviste; şarkı API'si etkilenmez. Şüphen varsa `ARENA_TIMEOUT` düşür |
 
 Render free plan notu: arena-proxy 15 dk hareketsizlikte uyur, ilk istek uyandırır (30-60 sn).
