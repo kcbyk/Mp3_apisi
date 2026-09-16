@@ -1,146 +1,551 @@
 {
-  "$comment": "Resilient selector registry. Her anahtar bir STRATEJİ ZİNCİRİDİR; sırayla denenir, ilk çalışan kazanır. Hedef DOM değiştiğinde sadece bu dosyayı güncelle — kod değişmez. Hangi stratejinin tuttuğunu görmek için: GET /api/v1/debug/selectors",
+  "$comment": "Resilient selector registry. Her anahtar bir STRATEJİ ZİNCİRİDİR; sırayla denenir, ilk çalışan kazanır. Zincirin BAŞINDAKİ kayıtlar gerçek arena.ai DOM'undan (2026-09-16 canlı keşif), sonrakiler jenerik/sahte hedef platform seçicileridir. Hedef DOM değiştiğinde sadece bu dosyayı güncelle — kod değişmez. Hangi stratejinin tuttuğunu görmek için: GET /api/v1/debug/selectors",
   "name": "arena",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "updated_at": "2026-09-16",
-
   "consentBanner": [
-    { "by": "role", "role": "button", "name": "Accept all", "optional": true },
-    { "by": "role", "role": "button", "name": "Accept All Cookies", "optional": true },
-    { "by": "role", "role": "button", "name": "Tümünü kabul et", "optional": true },
-    { "by": "role", "role": "button", "name": "Kabul et", "optional": true },
-    { "by": "testid", "value": "cookie-accept", "optional": true },
-    { "by": "css", "value": "[aria-label='Accept cookies'], [aria-label='accept']", "nth": 0, "optional": true }
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Agree",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Close",
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "button[aria-label='Dismiss banner']",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Accept all",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Accept All Cookies",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Tümünü kabul et",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Kabul et",
+      "optional": true
+    },
+    {
+      "by": "testid",
+      "value": "cookie-accept",
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "[aria-label='Accept cookies'], [aria-label='accept']",
+      "nth": 0,
+      "optional": true
+    }
   ],
-
   "loginWall": [
-    { "by": "role", "role": "button", "name": "Sign in", "optional": true },
-    { "by": "role", "role": "link", "name": "Log in", "optional": true },
-    { "by": "role", "role": "button", "name": "Giriş yap", "optional": true },
-    { "by": "text", "value": "Sign in to continue", "optional": true },
-    { "by": "css", "value": "input[type='password']", "optional": true },
-    { "by": "testid", "value": "login-form", "optional": true }
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Sign in",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "link",
+      "name": "Log in",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Giriş yap",
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Sign in to continue",
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "input[type='password']",
+      "optional": true
+    },
+    {
+      "by": "testid",
+      "value": "login-form",
+      "optional": true
+    }
   ],
-
   "challengeIndicators": [
-    { "by": "css", "value": "#challenge-form, #cf-wrapper, .cf-turnstile", "optional": true },
-    { "by": "text", "value": "Checking your browser", "optional": true },
-    { "by": "text", "value": "Just a moment", "optional": true },
-    { "by": "text", "value": "Verify you are human", "optional": true }
+    {
+      "by": "css",
+      "value": "iframe[src*='challenges.cloudflare.com']",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "iframe[src*='recaptcha']",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Verifying you are human",
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "#challenge-form, #cf-wrapper, .cf-turnstile",
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Checking your browser",
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Just a moment",
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Verify you are human",
+      "optional": true
+    }
   ],
-
   "navToGenerator": [
-    { "by": "role", "role": "link", "name": "Create", "optional": true },
-    { "by": "role", "role": "link", "name": "Image", "optional": true },
-    { "by": "role", "role": "button", "name": "New creation", "optional": true },
-    { "by": "testid", "value": "nav-create", "optional": true },
-    { "by": "hasText", "css": "a,button", "value": "Generate", "optional": true }
+    {
+      "by": "css",
+      "value": "button[aria-label='Image']",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "a[href='/image'], a[href^='/image/']",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "link",
+      "name": "Create",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "link",
+      "name": "Image",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "New creation",
+      "optional": true
+    },
+    {
+      "by": "testid",
+      "value": "nav-create",
+      "optional": true
+    },
+    {
+      "by": "hasText",
+      "css": "a,button",
+      "value": "Generate",
+      "optional": true
+    }
   ],
-
   "promptInput": [
-    { "by": "testid", "value": "prompt-input" },
-    { "by": "placeholder", "value": "Describe" },
-    { "by": "placeholder", "value": "prompt" },
-    { "by": "placeholder", "value": "What do you want to create" },
-    { "by": "placeholder", "value": "Hayalindeki görseli tanımla" },
-    { "by": "label", "value": "Prompt" },
-    { "by": "css", "value": "textarea[data-testid*='prompt'], textarea[aria-label*='prompt' i], textarea[name='prompt']" },
-    { "by": "css", "value": "form textarea, main textarea, textarea[contenteditable='false']", "nth": 0 },
-    { "by": "css", "value": "div[contenteditable='true'][role='textbox']" }
+    {
+      "by": "css",
+      "value": "textarea[placeholder^='Describe the image']",
+      "nth": 0
+    },
+    {
+      "by": "css",
+      "value": "textarea[placeholder*='Describe the image']",
+      "nth": 0
+    },
+    {
+      "by": "css",
+      "value": "textarea[placeholder^='Ask anything']",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "testid",
+      "value": "prompt-input"
+    },
+    {
+      "by": "placeholder",
+      "value": "Describe"
+    },
+    {
+      "by": "placeholder",
+      "value": "prompt"
+    },
+    {
+      "by": "placeholder",
+      "value": "What do you want to create"
+    },
+    {
+      "by": "placeholder",
+      "value": "Hayalindeki görseli tanımla"
+    },
+    {
+      "by": "label",
+      "value": "Prompt"
+    },
+    {
+      "by": "css",
+      "value": "textarea[data-testid*='prompt'], textarea[aria-label*='prompt' i], textarea[name='prompt']"
+    },
+    {
+      "by": "css",
+      "value": "form textarea, main textarea, textarea[contenteditable='false']",
+      "nth": 0
+    },
+    {
+      "by": "css",
+      "value": "div[contenteditable='true'][role='textbox']"
+    }
   ],
-
   "negativePromptInput": [
-    { "by": "testid", "value": "negative-prompt-input" },
-    { "by": "placeholder", "value": "Negative prompt" },
-    { "by": "label", "value": "Negative prompt" },
-    { "by": "css", "value": "textarea[name='negative_prompt'], textarea[id*='negative' i]" }
+    {
+      "by": "testid",
+      "value": "negative-prompt-input"
+    },
+    {
+      "by": "placeholder",
+      "value": "Negative prompt"
+    },
+    {
+      "by": "label",
+      "value": "Negative prompt"
+    },
+    {
+      "by": "css",
+      "value": "textarea[name='negative_prompt'], textarea[id*='negative' i]"
+    }
   ],
-
   "negativePromptToggle": [
-    { "by": "role", "role": "button", "name": "Negative prompt", "optional": true },
-    { "by": "role", "role": "button", "name": "Advanced", "optional": true },
-    { "by": "role", "role": "button", "name": "Settings", "optional": true },
-    { "by": "role", "role": "button", "name": "Gelişmiş", "optional": true },
-    { "by": "testid", "value": "advanced-toggle", "optional": true }
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Negative prompt",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Advanced",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Settings",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Gelişmiş",
+      "optional": true
+    },
+    {
+      "by": "testid",
+      "value": "advanced-toggle",
+      "optional": true
+    }
   ],
-
   "aspectRatioSelect": [
-    { "by": "testid", "value": "aspect-ratio-select" },
-    { "by": "label", "value": "Aspect ratio" },
-    { "by": "css", "value": "select[name='aspect_ratio'], select[id*='ratio' i], select[aria-label*='ratio' i]" }
+    {
+      "by": "testid",
+      "value": "aspect-ratio-select"
+    },
+    {
+      "by": "label",
+      "value": "Aspect ratio"
+    },
+    {
+      "by": "css",
+      "value": "select[name='aspect_ratio'], select[id*='ratio' i], select[aria-label*='ratio' i]"
+    }
   ],
-
   "aspectRatioButtons": [
-    { "by": "testid", "value": "aspect-ratio" },
-    { "by": "css", "value": "[role='radiogroup'] [role='radio']" },
-    { "by": "hasText", "css": "button", "value": "16:9" },
-    { "by": "hasText", "css": "button", "value": "1:1" }
+    {
+      "by": "testid",
+      "value": "aspect-ratio"
+    },
+    {
+      "by": "css",
+      "value": "[role='radiogroup'] [role='radio']"
+    },
+    {
+      "by": "hasText",
+      "css": "button",
+      "value": "16:9"
+    },
+    {
+      "by": "hasText",
+      "css": "button",
+      "value": "1:1"
+    }
   ],
-
   "aspectRatioDropdownTrigger": [
-    { "by": "role", "role": "button", "name": "Aspect ratio", "optional": true },
-    { "by": "role", "role": "button", "name": "Ratio", "optional": true },
-    { "by": "testid", "value": "ratio-trigger", "optional": true },
-    { "by": "hasText", "css": "button,[role='combobox']", "value": "1:1", "optional": true }
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Aspect ratio",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Ratio",
+      "optional": true
+    },
+    {
+      "by": "testid",
+      "value": "ratio-trigger",
+      "optional": true
+    },
+    {
+      "by": "hasText",
+      "css": "button,[role='combobox']",
+      "value": "1:1",
+      "optional": true
+    }
   ],
-
   "styleSelect": [
-    { "by": "testid", "value": "style-select" },
-    { "by": "label", "value": "Style" },
-    { "by": "css", "value": "select[name='style'], select[id*='style' i]" }
+    {
+      "by": "testid",
+      "value": "style-select"
+    },
+    {
+      "by": "label",
+      "value": "Style"
+    },
+    {
+      "by": "css",
+      "value": "select[name='style'], select[id*='style' i]"
+    }
   ],
-
   "styleDropdownTrigger": [
-    { "by": "role", "role": "button", "name": "Style", "optional": true },
-    { "by": "role", "role": "combobox", "name": "Style", "optional": true },
-    { "by": "testid", "value": "style-trigger", "optional": true }
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Style",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "combobox",
+      "name": "Style",
+      "optional": true
+    },
+    {
+      "by": "testid",
+      "value": "style-trigger",
+      "optional": true
+    }
   ],
-
   "dropdownOption": [
-    { "by": "role", "role": "option" },
-    { "by": "role", "role": "menuitem" },
-    { "by": "role", "role": "listitem" },
-    { "by": "hasText", "css": "[data-radix-popper-content-wrapper] *", "value": "{option}" },
-    { "by": "text", "value": "{option}" }
+    {
+      "by": "role",
+      "role": "option"
+    },
+    {
+      "by": "role",
+      "role": "menuitem"
+    },
+    {
+      "by": "role",
+      "role": "listitem"
+    },
+    {
+      "by": "hasText",
+      "css": "[data-radix-popper-content-wrapper] *",
+      "value": "{option}"
+    },
+    {
+      "by": "text",
+      "value": "{option}"
+    }
   ],
-
   "generateButton": [
-    { "by": "testid", "value": "generate-button", "tag": "button" },
-    { "by": "role", "role": "button", "name": "Generate" },
-    { "by": "role", "role": "button", "name": "Create" },
-    { "by": "role", "role": "button", "name": "Submit" },
-    { "by": "role", "role": "button", "name": "Oluştur" },
-    { "by": "hasText", "css": "button", "value": "Generate", "tag": "button" },
-    { "by": "css", "value": "button[type='submit']" },
-    { "by": "css", "value": "form button:last-of-type" }
+    {
+      "by": "css",
+      "value": "form:has(textarea[placeholder^='Describe the image']) button[aria-label='Send message']",
+      "nth": 0
+    },
+    {
+      "by": "css",
+      "value": "button[aria-label='Send message']:not([disabled])",
+      "nth": -1
+    },
+    {
+      "by": "testid",
+      "value": "generate-button",
+      "tag": "button"
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Generate"
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Create"
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Submit"
+    },
+    {
+      "by": "role",
+      "role": "button",
+      "name": "Oluştur"
+    },
+    {
+      "by": "hasText",
+      "css": "button",
+      "value": "Generate",
+      "tag": "button"
+    },
+    {
+      "by": "css",
+      "value": "button[type='submit']"
+    },
+    {
+      "by": "css",
+      "value": "form button:last-of-type"
+    }
   ],
-
   "generatingIndicator": [
-    { "by": "testid", "value": "generating", "optional": true },
-    { "by": "role", "role": "progressbar", "optional": true },
-    { "by": "text", "value": "Generating", "optional": true },
-    { "by": "text", "value": "Creating", "optional": true },
-    { "by": "css", "value": "[aria-busy='true'], .animate-spin, .animate-pulse, [class*='skeleton' i]", "optional": true }
+    {
+      "by": "text",
+      "value": "Generating",
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Creating",
+      "optional": true
+    },
+    {
+      "by": "testid",
+      "value": "generating",
+      "optional": true
+    },
+    {
+      "by": "role",
+      "role": "progressbar",
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Generating",
+      "optional": true
+    },
+    {
+      "by": "text",
+      "value": "Creating",
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "[aria-busy='true'], .animate-spin, .animate-pulse, [class*='skeleton' i]",
+      "optional": true
+    }
   ],
-
   "resultContainer": [
-    { "by": "testid", "value": "generation-result" },
-    { "by": "testid", "value": "result-grid" },
-    { "by": "css", "value": "[data-testid*='output' i], [class*='result' i] [class*='grid' i]" },
-    { "by": "css", "value": "main img[src*='http'], main img[src^='blob:'], main img[src^='data:image']" }
+    {
+      "by": "testid",
+      "value": "generation-result"
+    },
+    {
+      "by": "testid",
+      "value": "result-grid"
+    },
+    {
+      "by": "css",
+      "value": "[data-testid*='output' i], [class*='result' i] [class*='grid' i]"
+    },
+    {
+      "by": "css",
+      "value": "main img[src*='http'], main img[src^='blob:'], main img[src^='data:image']"
+    }
   ],
-
   "resultImages": [
-    { "by": "css", "value": "[data-testid*='result' i] img, [data-testid*='output' i] img" },
-    { "by": "css", "value": "main img[src^='blob:'], main img[src^='data:image'], main img[src*='cdn'], main img[src*='s3'], main img[src*='blob.core']" },
-    { "by": "css", "value": "main img[width='1024'], main img[width='2048'], main img[width='1536'], main img[width='1792']" },
-    { "by": "css", "value": "figure img, [role='figure'] img" },
-    { "by": "css", "value": "main img:not([alt*='logo' i]):not([alt*='icon' i])" }
+    {
+      "by": "css",
+      "value": "[data-testid*='result' i] img, [data-testid*='output' i] img"
+    },
+    {
+      "by": "css",
+      "value": "main img[src^='blob:'], main img[src^='data:image'], main img[src*='cdn'], main img[src*='s3'], main img[src*='blob.core']"
+    },
+    {
+      "by": "css",
+      "value": "main img[width='1024'], main img[width='2048'], main img[width='1536'], main img[width='1792']"
+    },
+    {
+      "by": "css",
+      "value": "figure img, [role='figure'] img"
+    },
+    {
+      "by": "css",
+      "value": "main img:not([alt*='logo' i]):not([alt*='icon' i])"
+    }
   ],
-
   "downloadLink": [
-    { "by": "role", "role": "link", "name": "Download", "optional": true },
-    { "by": "testid", "value": "download-button", "optional": true },
-    { "by": "css", "value": "a[download][href*='http'], a[href*='download' i][href*='image' i]", "optional": true }
-  ]
+    {
+      "by": "role",
+      "role": "link",
+      "name": "Download",
+      "optional": true
+    },
+    {
+      "by": "testid",
+      "value": "download-button",
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "a[download][href*='http'], a[href*='download' i][href*='image' i]",
+      "optional": true
+    }
+  ],
+  "notes": {
+    "target_routes": {
+      "direct": "/image/direct",
+      "side_by_side": "/image/side-by-side"
+    },
+    "flow": "1) /image/direct aç  2) varsa Agree/Enter onay kapısını geç  3) textarea[placeholder^='Describe the image'] doldur  4) button[aria-label='Send message'] tıkla  5) ağ trafiğinden/CDN'den görseli yakala",
+    "gotcha": "Anonim oturumda gönderim nextjs-api/sign-up ve Cloudflare challenge tetikliyor — oturum (cookie) şart."
+  }
 }
