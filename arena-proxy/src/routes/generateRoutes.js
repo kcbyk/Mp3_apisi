@@ -233,18 +233,54 @@ router.post(
       if (gonder) {
         const girdi = await page.locator("textarea[placeholder^='Describe the image'], textarea[placeholder*='Describe the image']").first();
         rapor.girdiVar = await girdi.count();
-        rapor.girdiOncekiDeger = await girdi.inputValue().catch(() => null);
         await girdi.fill(prompt).catch((e) => (rapor.doldurmaHatasi = String(e.message).slice(0, 120)));
         await page.waitForTimeout(800);
         rapor.girdiSonrakiDeger = await girdi.inputValue().catch(() => null);
         const btn = page.locator("button[aria-label='Send message']").first();
         rapor.butonAdet = await btn.count();
         rapor.butonKapali = await btn.isDisabled().catch(() => null);
-        rapor.butonGorunur = await btn.isVisible().catch(() => null);
-        await girdi.focus().catch(() => {});
-        await page.keyboard.press('Enter').catch(() => {});
-        await page.waitForTimeout(2500);
-        rapor.enterSonrasiGirdi = await girdi.inputValue().catch(() => null);
+        rapor.butonKutu = await btn.boundingBox().catch(() => null);
+        // Katman var mı? (tıklamayı emen görünmez katmanlar dahil)
+        rapor.katmanUstte = await page
+          .evaluate(() => {
+            const b = document.querySelector("button[aria-label='Send message']");
+            if (!b) return null;
+            const r = b.getBoundingClientRect();
+            const el = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+            return { ust: el ? `${el.tagName}.${String(el.className).slice(0, 60)}` : null, ayni: el === b || b.contains(el) };
+          })
+          .catch(() => null);
+
+        const gonderildi = async () => {
+          const v = await girdi.inputValue().catch(() => null);
+          const govde = await page.locator('body').innerText().catch(() => '');
+          return { girdiBos: v === '', girdiDeger: v, uretiyor: /Generating|Creating|Rendering/i.test(govde), url: page.url() };
+        };
+        const denemeler = [];
+        const dene = async (ad, fn) => {
+          const once = page.url();
+          await fn().catch((e) => denemeler.push({ ad, hata: String(e.message).slice(0, 90) }));
+          await page.waitForTimeout(2500);
+          const durum = await gonderildi();
+          denemeler.push({ ad, ...durum, urlDegisti: page.url() !== once });
+          return durum.girdiBos || durum.urlDegisti || durum.uretiyor;
+        };
+
+        // 1) Enter
+        if (!(await dene('enter', async () => { await girdi.focus(); await page.keyboard.press('Enter'); }))) {
+          // 2) gönder düğmesine normal tıklama
+          if (!(await dene('buton-click', async () => { await btn.click({ timeout: 8000 }); }))) {
+            // 3) DOM click (katman pointer'ı emiyorsa)
+            if (!(await dene('js-click', async () => { await page.evaluate(() => document.querySelector("button[aria-label='Send message']")?.click()); }))) {
+              // 4) metin alanına tıkla + Enter (düğme yerine klavye)
+              if (!(await dene('click+enter', async () => { await girdi.click({ timeout: 5000 }); await page.keyboard.press('Enter'); }))) {
+                await dene('ctrl+enter', async () => { await girdi.focus(); await page.keyboard.press('Control+Enter'); });
+              }
+            }
+          }
+        }
+        rapor.gonderimDenemeleri = denemeler;
+        rapor.enterSonrasiGirdi = (await girdi.inputValue().catch(() => null));
         rapor.enterSonrasiGenerating = await grupIncele(page, loadSelectors().generatingIndicator, 'generatingIndicator');
         await page.waitForTimeout(4000);
         rapor.sonUrl = page.url();
