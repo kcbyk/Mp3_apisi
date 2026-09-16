@@ -142,6 +142,17 @@ const schema = z.object({
 
   ARTIFACT_DELIVERY: z.enum(['url', 'base64', 'file', 'both']).catch('url'),
   ARTIFACT_LOCAL_DIR: str('./data/artifacts'),
+
+  // Görsel sağlayıcı seçimi:
+  //   'arena'        → arena.ai hedefi tarayıcıyla sürülür (oturum + Cloudflare zinciri)
+  //   'pollinations' → TARAYICISIZ: image.pollinations.ai URL API'si (oturum/anahtar gerekmez,
+  //                    ~3-30sn; ücretsiz anon katman). İstek gövdesinde {"provider":"..."} ile
+  //                    istek bazlı da seçilebilir; girilmezse bu varsayılan kullanılır.
+  IMAGE_PROVIDER: str('arena'),
+  POLLINATIONS_BASE_URL: str('https://image.pollinations.ai/prompt'),
+  POLLINATIONS_MODEL: str('flux'), // flux (kalite/varsayılan) | turbo (hız)
+  POLLINATIONS_TOKEN: str(''),     // opsiyonel seed-tier anahtar (yoksa anon katman)
+  POLLINATIONS_TIMEOUT_MS: num(180_000),
   ARTIFACT_PUBLIC_BASE_URL: str(''),
   MAX_DOWNLOAD_BYTES: num(26_214_400),
   ALLOWED_ASSET_HOSTS: list([]),
@@ -281,6 +292,13 @@ export const config = {
     allowedAssetHosts: env.ALLOWED_ASSET_HOSTS,
     deleteAfterMs: env.DELETE_ARTIFACT_AFTER_MS,
   },
+  imageProvider: {
+    name: env.IMAGE_PROVIDER === 'pollinations' ? 'pollinations' : 'arena',
+    baseUrl: env.POLLINATIONS_BASE_URL.replace(/\/+$/, ''),
+    model: env.POLLINATIONS_MODEL,
+    token: env.POLLINATIONS_TOKEN || null,
+    timeoutMs: env.POLLINATIONS_TIMEOUT_MS,
+  },
 };
 
 /**
@@ -346,6 +364,7 @@ export function redactedSummary() {
     delivery: config.artifact.delivery,
     dryRun: config.target.dryRun,
     target: config.target.baseUrl,
+    imageProvider: config.imageProvider.name,
     timeouts: {
       jobTimeoutMs: config.queue.jobTimeoutMs,
       generationTimeoutMs: config.target.generationTimeoutMs,

@@ -44,6 +44,8 @@ const generateSchema = z.object({
   async: z.boolean().optional().default(false),
   callback_url: z.string().url().optional(),
   delivery: z.enum(['url', 'base64', 'file', 'both']).optional(),
+  // İsteğe bağlı sağlayıcı override: verilmezse IMAGE_PROVIDER env varsayılanı kullanılır
+  provider: z.enum(['arena', 'pollinations']).optional(),
 }).strict();
 
 /* ------------------------ POST /generate-asset ---------------------------- */

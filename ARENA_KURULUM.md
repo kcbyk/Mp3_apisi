@@ -476,3 +476,22 @@ docker run -d --name arena-proxy --restart unless-stopped \
 Senkron testte istemci süresi iş süresinden büyük olmalı: `curl -m 1500 ...`.
 İdeal kullanım yine asenkron: `{"prompt":"...","async":true}` → `GET /api/v1/jobs/<job_id>`.
 İstemci kopsa bile iş arka planda yaşar; sonuç `/jobs/<job_id>`'den okunur.
+
+## 13) Tarayıcısız sağlayıcı: Pollinations (kurtuluş toķeninı, 2026-09-16)
+
+arena.ai zinciri (oturum rotasyonu + Cloudflare + bekçi) kırılınca yeni strateji:
+`IMAGE_PROVIDER=pollinations` ile servis **Chromium'a hiç çıkmadan** görsel üretir.
+
+- API: `GET image.pollinations.ai/prompt/<prompt>?width=..&height=..&model=flux&nologo=true`
+- Oturum YOK, anahtar YOK, Cloudflare YOK. Anon katmanda tek sorun paylaşımlı
+  havuzun "300 RPM" geçici 5xx'leri → kod 3 denemeye kadar backoff ile kendisi dener
+  (`src/scrapers/directPollinations.js`).
+- Canlı ölçüm (aynı gün): cache'li prompt ~0.5sn, taze 1024px ~3-45sn.
+- Sağlayıcı seçimi (öncelik sırası): istek gövdesi `{"provider":"arena|pollinations"}` >
+  `IMAGE_PROVIDER` env > varsayılan `arena` (eski davranış bozulmaz).
+- Not: URL API'sinde negatif prompt yoktur (`negative_prompt_ignored: true` olarak
+  meta'da işaretlenir); stil bilgisi prompt'a birleştirilir.
+- Kozmetik: meta'da `provider`, `width/height`, `seed`, `final_url` döner; teslim
+  biçimleri (`url|base64|file|both`) arena akışıyla birebir aynıdır.
+- Sağlık: `/api/v1/health` içinde `image_provider` alanı; pollinations modunda
+  readiness oturum dosyası kontrolü yapmaz (gereksiz kırmızılığı önler).

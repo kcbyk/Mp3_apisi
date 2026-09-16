@@ -14,6 +14,7 @@ import { sessionStore } from '../automation/sessionStore.js';
 import { oturumDurumu, yenilemeGerekliMi, oturumuYenile, tarayiciCerezleriniYakala } from '../automation/sessionRefresh.js';
 import { runGeneration, normalizeParams, loadSelectors } from '../scrapers/arenaScraper.js';
 import { deliverArtifact } from '../scrapers/artifactDelivery.js';
+import { pollinationsGenerate } from '../scrapers/directPollinations.js';
 import { selectorReport } from '../utils/resilientSelector.js';
 import { AppError, SessionError, ValidationError } from '../errors.js';
 
@@ -97,6 +98,49 @@ export async function generateAsset(rawParams, { requestId = crypto.randomUUID()
     { aspect_ratio: params.aspectRatio, style: params.style || null, prompt_chars: params.prompt.length, negative: Boolean(params.negativePrompt) },
     'üretim isteği alındı',
   );
+
+  /* ------------------------------------------------------------------ */
+  /*  Sağlayıcı seçimi (istek bazlı override > env varsayılanı)          */
+  /*   - 'arena'        : klasik tarayıcı akışı (oturum + kuyruk)        */
+  /*   - 'pollinations' : TARAYICISIZ HTTP API — Chromium'a hiç çıkma    */
+  /* ------------------------------------------------------------------ */
+  const provider = ['arena', 'pollinations'].includes(rawParams?.provider)
+    ? rawParams.provider
+    : config.imageProvider.name;
+
+  if (provider === 'pollinations') {
+    try {
+      const delivery = ['url', 'base64', 'file', 'both'].includes(rawParams?.delivery) ? rawParams.delivery : undefined;
+      const pkg = await pollinationsGenerate(params, { taskId, delivery, onProgress });
+      const elapsed = Date.now() - t0;
+      metrics.inc('requests_success');
+      metrics.observeLatency(elapsed);
+      log_.info({ elapsedMs: elapsed, provider: 'pollinations', delivery: pkg.artifact.delivery }, 'üretim başarılı');
+      return {
+        success: true,
+        image_url: pkg.artifact.image_url ?? null,
+        image_base64: pkg.artifact.image_base64 ?? null,
+        image_file: pkg.artifact.image_file ?? null,
+        mime_type: pkg.artifact.mime_type ?? null,
+        bytes: pkg.artifact.bytes ?? null,
+        sha256: pkg.artifact.sha256 ?? null,
+        delivery: pkg.artifact.delivery,
+        captured_from: pkg.artifact.source,
+        execution_time_ms: elapsed,
+        meta: pkg.meta,
+        request_id: requestId,
+      };
+    } catch (err) {
+      metrics.inc('requests_failed');
+      metrics.fail(err.code ?? err.name ?? 'UNKNOWN');
+      const elapsed = Date.now() - t0;
+      log_.error({ err: err.message, code: err.code, elapsedMs: elapsed }, 'üretim başarısız (pollinations)');
+      if (err instanceof AppError) throw err;
+      const wrapped = new AppError(err.message, { details: { name: err.name } });
+      wrapped.stack = err.stack;
+      throw wrapped;
+    }
+  }
 
   // 0) Jeton dolmak üzereyse üretimden ÖNCE yenile (iş ortasında oturum düşmesin)
   if (!config.target.dryRun && yenilemeGerekliMi(10)) {
@@ -207,6 +251,7 @@ export function healthPayload() {
     uptime_s: Math.round(process.uptime()),
     env: config.env,
     dry_run: config.target.dryRun,
+    image_provider: config.imageProvider.name,
     session: { ...(config.target.dryRun ? { skipped: 'dry_run' } : sessionStore.describe()), oturum: oturum },
     browser: browserManager.health(),
     queue: taskQueue.stats(),
@@ -216,7 +261,8 @@ export function healthPayload() {
 
 export function readiness() {
   const problems = [];
-  if (!config.target.dryRun && config.session.mode === 'storage' && !sessionStore.exists()) {
+  // Tarayıcısız sağlayıcıda oturum dosyası gereksiz (Chromium da hiç açılmaz)
+  if (config.imageProvider.name !== 'pollinations' && !config.target.dryRun && config.session.mode === 'storage' && !sessionStore.exists()) {
     problems.push('session_file_missing');
   }
   if (config.auth.enabled && config.auth.keys.length === 0) problems.push('auth_enabled_but_no_keys');
