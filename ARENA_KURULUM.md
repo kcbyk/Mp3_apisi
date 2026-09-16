@@ -81,7 +81,10 @@ Render → **New → Web Service** → repo `kcbyk/Mp3_apisi`:
 | `API_KEYS` | `sk-arena-<rastgele>` | **Gizli.** Bu değeri mp3-apisi tarafındaki `ARENA_API_KEY`'e yazacaksın |
 | `AUTH_ENABLED` | `true` | |
 | `TARGET_BASE_URL` | `https://arena.ai` | Hedef platform |
-| `TARGET_GENERATE_PATH` | `/` | Üretim aracının yolu |
+| `TARGET_GENERATE_PATH` | `/image/direct` | arena.ai görsel üretim arayüzü (keşfedildi) |
+| `TARGET_SEND_MODE` | `auto` | `auto` → arena.ai'de **Enter** ile gönderir (butona tıklamak reCAPTCHA/ToS kapısını tetikleyip üretimi başlatmıyor) |
+| `GENERATION_TIMEOUT_MS` | `600000` | Arena'nın "Max" modeli yoğun saatlerde uzun sürüyor |
+| `JOB_TIMEOUT_MS` | `660000` | Üretim zaman aşımı + pay |
 | `SESSION_STATE_B64` | `<base64>` | **Gizli.** Aşağıdaki 2c adımında üretilecek |
 | `DRY_RUN` | `false` | `true` yaparsan tarayıcı açılmaz, örnek görsel döner (test için pratik) |
 | `ARTIFACT_DELIVERY` | `url` | CDN linkini doğrudan döndür (bayt taşımadan en hızlı) |
@@ -99,6 +102,7 @@ Render → **mp3-apisi** → Environment → **Add Environment Variable**:
 | `ARENA_API_URL` | `https://arena-proxy-xxxx.onrender.com` (2a'daki servisin adresi) |
 | `ARENA_API_KEY` | `sk-arena-<2a'da belirlediğin anahtar>` |
 | `ARENA_DELIVERY` | `url` (veya görseli kendi sunucundan geçirmek istersen `file`) |
+| `ARENA_TIMEOUT` | `900` (Arena'nın yavaş modeli için) |
 
 Opsiyonel: `ARENA_TIMEOUT` (varsayılan **150** sn — Render free'de soğuk başlangıç payı),
 `ARENA_DENEME` (varsayılan 2).
@@ -131,6 +135,32 @@ npm run session:env -- --out session.env
 
 Oturum düşerse: `POST /api/v1/session/import` (arena-proxy) veya yeni base64 üretip env'i
 güncelle → Render → Manual Deploy.
+
+---
+
+## 2d. arena.ai hakkında doğrulanmış teknik notlar
+
+Bu entegrasyon sırasında **canlı arena.ai DOM'u ve ağ trafiği** incelendi:
+
+| Konu | Bulgu |
+|---|---|
+| Görsel üretim rotası | `https://arena.ai/image/direct` (tekli), `/image/side-by-side` (karşılaştırma) |
+| Prompt alanı | `textarea[placeholder^="Describe the image you want to generate"]` |
+| Görsel modu butonu | `button[aria-label="Image"]` |
+| Gönder butonu | `button[aria-label="Send message"]` (sayfada 2 adet, biri pasif) |
+| **Kritik** | Gönder **butonuna tıklamak** "…This helps us keep the platform safe… Protected by reCAPTCHA" ara kapısını tetikliyor ve üretim başlamıyor. **Enter ile göndermek** doğrudan çalışıyor. `TARGET_SEND_MODE=auto` bunu arena.ai için otomatik seçer. |
+| Onay kapısı | İlk gönderimde "…hit Enter on your keyboard to agree" ToS kapısı çıkar; Enter hem kapıyı kapatır hem mesajı gönderir |
+| Görsel kaynağı | `messages-prod.<hash>.r2.cloudflarestorage.com` (Cloudflare R2) — izin listesine eklenmiştir |
+| Yanlış eşleşme koruması | Kullanıcı avatarı (`googleusercontent.com`), logo ve üretim öncesi sayfada duran görseller aday sayılmaz (DOM temel çizgisi) |
+| Oturum | Google ile giriş yapılmış oturum gerekir; çerez tabanlıdır (localStorage gerekmez) |
+
+**Doğrulama kaydı:** Gerçek arena.ai üzerinden görsel üretimi iki kez başarıyla tamamlandı
+(28 sn ve 40 sn; 1536×1024 PNG, Cloudflare R2 URL'i). Yoğun saatlerde Arena'nın "Max"
+modeli dakikalarca sürebiliyor — bu yüzden zaman aşımları yüksek tutulmuştur.
+
+Ayrıca: `DEBUG_CAPTURE=1` ile yakalama döngüsü her 10 turda sayfa durumunu loglar
+(sorun gidermede en hızlı yol). Hata anında `data/screenshots/` altına ekran görüntüsü
+kaydedilir; Render'da kalıcı olmadığı için loglardaki `metinSon` alanına bakın.
 
 ---
 
