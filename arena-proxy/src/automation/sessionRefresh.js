@@ -42,6 +42,44 @@ export function oturumCereziniBul(state) {
   return (state?.cookies ?? []).find((c) => c.name === ad) ?? null;
 }
 
+/**
+ * Parçalı çerez şeması (arena.ai davranışı):
+ *   Çerez boyutu 4096 karakteri aşınca site oturumu böler:
+ *     arena-auth-prod-v1.0 = "base64-" + akışın ilk parçası
+ *     arena-auth-prod-v1.1 = akışın devamı      (v1.2, v1.3 … de olabilir)
+ *   Okurken parçalar ana değerin ARDINA eklenir, sonra base64 çözülür.
+ *   (Tarayıcıda deneyle doğrulandı: 4596 = 3174 + 1422; ana parça tek başına çözülmez.)
+ */
+export function oturumParcaCerezleri(state) {
+  const ad = config.session.cookieName;
+  const kok = ad.replace(/\.[0-9]+$/, '');
+  const desen = new RegExp(`^${kok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.[0-9]+$`);
+  return (state?.cookies ?? [])
+    .filter((c) => c.name !== ad && desen.test(c.name))
+    .sort((a, b) => Number(String(a.name).split('.').pop()) - Number(String(b.name).split('.').pop()));
+}
+
+/** Ana çerez + parçaları → birleşik çerez değeri (parça yoksa ana değerin kendisi). */
+export function birlesikCerezDegeri(state) {
+  const ana = oturumCereziniBul(state);
+  if (!ana) return null;
+  return [ana, ...oturumParcaCerezleri(state)].map((c) => String(c.value ?? '')).join('');
+}
+
+/**
+ * Uzun oturum değerini çerez sınırına göre böler (yazarken kullanılır).
+ * Döner: { ana, ekler: [...] } — ana 'base64-' önekini taşır, ekler taşımaz.
+ */
+export function cerezDegeriniBol(deger, { sinir = 3181 } = {}) {
+  const ham = String(deger ?? '');
+  if (ham.length <= sinir) return { ana: ham, ekler: [] };
+  const gövde = ham.startsWith('base64-') ? ham.slice(7) : ham;
+  const kesim = Math.floor((sinir - 7) / 4) * 4; // 4'ün katı: parçalar tek başına da geçerli base64 kalsın
+  const ekler = [];
+  for (let i = kesim; i < gövde.length; i += kesim) ekler.push(gövde.slice(i, i + kesim));
+  return { ana: `base64-${gövde.slice(0, kesim)}`, ekler };
+}
+
 /** Çerez değerini çözer: base64 JSON oturum (Supabase) → ayrıntılar. */
 export function oturumCoz(cer) {
   if (!cer?.value) return { ok: false, sebep: 'çerez yok' };
@@ -85,7 +123,10 @@ export function oturumDurumu() {
   }
   const cer = oturumCereziniBul(state);
   if (!cer) return { ok: false, sebep: `${config.session.cookieName} çerezi bulunamadı` };
-  const c = oturumCoz(cer);
+  // Parçalı şema: ana çerez tek başına çözülmezse parçaları ekleyerek dene
+  const birlesik = birlesikCerezDegeri(state) ?? cer.value;
+  let c = oturumCoz({ value: birlesik });
+  if (!c.ok && birlesik !== cer.value) c = oturumCoz(cer);
   if (!c.ok) return { ok: false, sebep: c.sebep };
   return {
     ok: c.kalanDk === null || c.kalanDk > 0,
@@ -93,6 +134,7 @@ export function oturumDurumu() {
     refreshVar: c.refreshVar,
     kullanici: c.kullanici,
     sessionId: c.sessionId ? `${String(c.sessionId).slice(0, 8)}…` : null,
+    parcaSayisi: oturumParcaCerezleri(state).length,
     sonYenileme: config.session.sonYenileme ?? null,
   };
 }
@@ -195,6 +237,27 @@ export async function oturumuKaliciYaz(state, { neden = 'refresh' } = {}) {
   return sonuc;
 }
 
+/** Gelen yeni çerez değerlerini duruma uygular; uzun değeri gerekirse parçalara böler. */
+export function cerezleriUygula(state, yeniDegerler) {
+  const ad = config.session.cookieName;
+  const kok = ad.replace(/\.[0-9]+$/, '');
+  const desen = new RegExp(`^${kok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.[0-9]+$`);
+  const anaHam = yeniDegerler[ad];
+  if (!anaHam) return state;
+  // Sunucu zaten parçalı gönderdiyse önce birleştir, sonra kendi sınırımıza göre böl
+  const parcaliGelen = Object.keys(yeniDegerler)
+    .filter((n) => n !== ad)
+    .sort((a, b) => Number(String(a).split('.').pop()) - Number(String(b).split('.').pop()))
+    .map((n) => yeniDegerler[n]);
+  const birlesikGelen = [anaHam, ...parcaliGelen].join('');
+  const bolunmus = cerezDegeriniBol(birlesikGelen);
+  const ornek = oturumCereziniBul(state) ?? { name: ad, domain: 'arena.ai', path: '/' };
+  const digerleri = (state.cookies ?? []).filter((c) => c.name !== ad && !desen.test(c.name));
+  const yenileri = [{ ...ornek, name: ad, value: bolunmus.ana }];
+  bolunmus.ekler.forEach((v, i) => yenileri.push({ ...ornek, name: `${kok}.${i + 1}`, value: v }));
+  return { ...state, cookies: [...digerleri, ...yenileri] };
+}
+
 /* ----------------------------- Yenileme yolları --------------------------- */
 
 /** A) HTTP yolu: sayfaya çerezle istek → Set-Cookie ile gelen yeni oturum. */
@@ -202,11 +265,13 @@ export async function httpIleYenile() {
   const state = sessionStore.get(false);
   const cer = oturumCereziniBul(state);
   if (!cer) return { ok: false, sebep: 'oturum çerezi yok' };
+  const parcalar = oturumParcaCerezleri(state);
 
   const url = `${config.target.baseUrl}${config.target.generatePath || '/'}`;
   const r = await fetch(url, {
     headers: {
-      cookie: `${cer.name}=${cer.value}`,
+      // parçalı şema: ana çerez + devam parçaları birlikte gönderilmeli
+      cookie: [cer, ...parcalar].map((c) => `${c.name}=${c.value}`).join('; '),
       'user-agent': config.stealth.userAgent,
       accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'accept-language': `${config.stealth.locale},en;q=0.8`,
@@ -216,21 +281,22 @@ export async function httpIleYenile() {
   });
 
   const setCookies = typeof r.headers.getSetCookie === 'function' ? r.headers.getSetCookie() : [];
-  const yeni = setCookies
-    .map((s) => s.split(';')[0])
-    .map((s) => {
-      const i = s.indexOf('=');
-      return { name: s.slice(0, i).trim(), value: s.slice(i + 1) };
-    })
-    .find((c) => c.name === cer.name && c.value && c.value !== cer.value);
+  const kok = config.session.cookieName.replace(/\.[0-9]+$/, '');
+  const gelenler = {};
+  for (const s of setCookies) {
+    const i = s.indexOf('=');
+    if (i < 0) continue;
+    const adi = s.slice(0, i).trim();
+    if (adi !== cer.name && !(adi.startsWith(`${kok}.`) && /^\d+$/.test(adi.slice(kok.length + 1)))) continue;
+    gelenler[adi] = s.slice(i + 1).split(';')[0];
+  }
 
-  if (!yeni) return { ok: false, sebep: `Set-Cookie ile yeni oturum gelmedi (HTTP ${r.status})` };
+  if (!gelenler[cer.name] || gelenler[cer.name] === cer.value) {
+    return { ok: false, sebep: `Set-Cookie ile yeni oturum gelmedi (HTTP ${r.status})` };
+  }
 
-  const yeniDurum = {
-    ...state,
-    cookies: state.cookies.map((c) => (c.name === cer.name ? { ...c, value: yeni.value } : c)),
-  };
-  const bilgi = oturumCoz({ value: yeni.value });
+  const yeniDurum = cerezleriUygula(state, gelenler);
+  const bilgi = oturumCoz({ value: birlesikCerezDegeri(yeniDurum) });
   await oturumuKaliciYaz(yeniDurum, { neden: 'http' });
   return { ok: true, yol: 'http', yeniKalanDk: bilgi.kalanDk ?? null, refreshVar: bilgi.refreshVar ?? null };
 }
@@ -247,20 +313,22 @@ export async function tarayiciIleYenile({ taskId = 'session-refresh' } = {}) {
       .catch(() => {});
     await kiralama.page.waitForTimeout(6000);
 
-    const yeniCerezler = await kiralama.context.cookies(config.target.baseUrl);
+    const tarayiciCerezleri = await kiralama.context.cookies(config.target.baseUrl);
     const onceki = sessionStore.get(false);
-    const eskiCer = oturumCereziniBul(onceki);
-    const yeniCer = yeniCerezler.find((c) => c.name === config.session.cookieName);
-    if (!yeniCer) return { ok: false, sebep: 'tarayıcıda oturum çerezi bulunamadı' };
-    if (eskiCer && eskiCer.value === yeniCer.value) {
+    const cer = oturumCereziniBul(onceki);
+    const kok = config.session.cookieName.replace(/\.[0-9]+$/, '');
+    const gelenler = {};
+    for (const c of tarayiciCerezleri) {
+      if (c.name !== config.session.cookieName && !(c.name.startsWith(`${kok}.`) && /^\d+$/.test(c.name.slice(kok.length + 1)))) continue;
+      gelenler[c.name] = c.value;
+    }
+    if (!gelenler[config.session.cookieName]) return { ok: false, sebep: 'tarayıcıda oturum çerezi bulunamadı' };
+    if (cer && cer.value === gelenler[config.session.cookieName]) {
       return { ok: false, sebep: 'tarayıcı çerezi değiştirmedi (yenileme tetiklenmedi)' };
     }
 
-    const yeniDurum = {
-      cookies: [...onceki.cookies.filter((c) => c.name !== yeniCer.name), yeniCer],
-      origins: onceki.origins ?? [],
-    };
-    const bilgi = oturumCoz(yeniCer);
+    const yeniDurum = cerezleriUygula(onceki, gelenler);
+    const bilgi = oturumCoz({ value: birlesikCerezDegeri(yeniDurum) });
     await oturumuKaliciYaz(yeniDurum, { neden: 'tarayıcı' });
     return { ok: true, yol: 'tarayıcı', yeniKalanDk: bilgi.kalanDk ?? null, refreshVar: bilgi.refreshVar ?? null };
   } finally {
