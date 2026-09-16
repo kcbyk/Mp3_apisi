@@ -82,6 +82,7 @@ const schema = z.object({
   SESSION_KEEPALIVE_MINUTES: num(25),
   SESSION_REFRESH_THRESHOLD_MINUTES: num(20),
   SESSION_REFRESH_TIMEOUT_MS: num(45_000),
+  SESSION_BROWSER_WAIT_MS: num(75_000), // tarayıcı yolu: jeton değişimini bekleme süresi
   SESSION_PERSIST: str('file+render'),
   SESSION_ENV_VAR_NAME: str('SESSION_STATE_B64'),
   RENDER_API_KEY: str(''),
@@ -208,6 +209,7 @@ export const config = {
     keepAliveMinutes: env.SESSION_KEEPALIVE_MINUTES, // 0 → bekçi kapalı
     refreshThresholdMinutes: env.SESSION_REFRESH_THRESHOLD_MINUTES,
     refreshTimeoutMs: env.SESSION_REFRESH_TIMEOUT_MS,
+    browserRefreshWaitMs: env.SESSION_BROWSER_WAIT_MS,
     // 'file' | 'render' | 'file+render' | 'none'  → yeni jeton nereye yazılsın
     persist: String(env.SESSION_PERSIST || 'file+render').toLowerCase(),
     envVarName: env.SESSION_ENV_VAR_NAME,

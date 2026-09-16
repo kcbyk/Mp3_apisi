@@ -46,8 +46,10 @@ const durumYaz = (deger) => {
 // Hedef: davranış bayrağıyla yeni jeton döndürür (veya hiç döndürmez)
 let istekSayisi = 0;
 let yeniCerezDondur = true;
+let sonCookieBasligi = '';
 const sunucu = http.createServer((req, res) => {
   istekSayisi += 1;
+  sonCookieBasligi = req.headers.cookie || '';
   if (yeniCerezDondur === 'uzun') {
     // arena.ai gibi uzun oturumu iki çerez halinde döndür
     const uzun =
@@ -180,6 +182,24 @@ test('yenileme uzun jeton döndürürse oturum iki çerez olarak yazılır', asy
   assert.ok(kayitli.cookies.every((c) => c.value.length <= 4000), 'her parça 4000 karakterin altında');
   assert.ok(sr.oturumCoz({ value: sr.birlesikCerezDegeri(kayitli) }).kalanDk > 50);
   assert.equal(sr.oturumDurumu().ok, true);
+});
+
+test('HTTP yenileme "süresi dolmuş" kopya gönderir → sunucu istemciyi yenilemeye zorlanır', async () => {
+  durumYaz(cerez(3600, 'taze'));           // jeton bir saat geçerli
+  sonCookieBasligi = '';
+  const sonuc = await sr.httpIleYenile();
+  assert.equal(sonuc.ok, true, sonuc.sebep || '');
+  // Gönderilen çerezdeki expires_at geçmişte olmalı (ama access/refresh_token korunmalı)
+  const eslesme = /arena-auth-prod-v1\.0=([^;]+)/.exec(sonCookieBasligi);
+  assert.ok(eslesme, 'çerez başlığı gönderilmeliydi');
+  const ham = decodeURIComponent(eslesme[1]);
+  const json = JSON.parse(Buffer.from(ham.replace(/^base64-/, ''), 'base64').toString('utf8'));
+  assert.ok(json.expires_at < Math.floor(Date.now() / 1000), 'expires_at geçmişe çekilmeli');
+  assert.ok(json.refresh_token, 'refresh_token korunmalı');
+  assert.ok(json.access_token, 'access_token korunmalı (sunucu jeton sahibini doğrular)');
+  // Oturumda saklanan değer DEĞİŞMEMELİ (yalnızca istek kopyası zorlanır)
+  const kayitli = JSON.parse(fs.readFileSync(process.env.SESSION_STATE_PATH, 'utf8'));
+  assert.equal(sr.oturumCoz({ value: kayitli.cookies[0].value }).kalanDk > 50, true);
 });
 
 test.after(() => {

@@ -258,6 +258,38 @@ export function cerezleriUygula(state, yeniDegerler) {
   return { ...state, cookies: [...digerleri, ...yenileri] };
 }
 
+/**
+ * Oturumu "süresi dolmuş" gösteren bir kopya üretir (istemciyi yenilemeye zorlamak için).
+ * access_token / refresh_token KORUNUR; yalnızca expires_at geçmişe çekilir.
+ * Böylece sitenin kendi istemcisi (Supabase GoTrue) jetonu yeniler — rotasyon meşru olur.
+ * (Sunucu düz istekte yeni çerez vermiyor, tarayıcı ise jeton dolmadan yenilemiyor.)
+ */
+export function suresiGecmisKopya(deger, { saniyeOnce = 120 } = {}) {
+  try {
+    const ham = String(deger ?? '');
+    const onek = ham.startsWith('base64-') ? 'base64-' : '';
+    const govde = onek ? ham.slice(7) : ham;
+    const json = JSON.parse(Buffer.from(govde, 'base64').toString('utf8'));
+    json.expires_at = Math.floor(Date.now() / 1000) - saniyeOnce;
+    return onek + Buffer.from(JSON.stringify(json)).toString('base64');
+  } catch {
+    return deger;
+  }
+}
+
+/** Yenileme isteği/tarayıcısı için "süresi dolmuş" çerez seti (parçalı şemaya uygun). */
+export function yenilemeIcinCerezler(state) {
+  const ad = config.session.cookieName;
+  const kok = ad.replace(/\.[0-9]+$/, '');
+  const ana = oturumCereziniBul(state);
+  if (!ana) return [];
+  const zorlanmis = suresiGecmisKopya(birlesikCerezDegeri(state) ?? ana.value);
+  const { ana: anaDeger, ekler } = cerezDegeriniBol(zorlanmis);
+  const liste = [{ ...ana, name: ad, value: anaDeger }];
+  ekler.forEach((v, i) => liste.push({ ...ana, name: `${kok}.${i + 1}`, value: v }));
+  return liste;
+}
+
 /* ----------------------------- Yenileme yolları --------------------------- */
 
 /** A) HTTP yolu: sayfaya çerezle istek → Set-Cookie ile gelen yeni oturum. */
@@ -268,10 +300,12 @@ export async function httpIleYenile() {
   const parcalar = oturumParcaCerezleri(state);
 
   const url = `${config.target.baseUrl}${config.target.generatePath || '/'}`;
+  const istekCerezleri = yenilemeIcinCerezler(state);
   const r = await fetch(url, {
     headers: {
-      // parçalı şema: ana çerez + devam parçaları birlikte gönderilmeli
-      cookie: [cer, ...parcalar].map((c) => `${c.name}=${c.value}`).join('; '),
+      // parçalı şema: ana çerez + devam parçaları birlikte gönderilmeli.
+      // "Süresi dolmuş" kopya gönderilir → sunucu istemciyi yenilemeye zorlar.
+      cookie: istekCerezleri.map((c) => `${c.name}=${c.value}`).join('; '),
       'user-agent': config.stealth.userAgent,
       accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'accept-language': `${config.stealth.locale},en;q=0.8`,
@@ -305,30 +339,48 @@ export async function httpIleYenile() {
 export async function tarayiciIleYenile({ taskId = 'session-refresh' } = {}) {
   const kiralama = await browserManager.acquirePage({ taskId });
   try {
-    await kiralama.page
-      .goto(`${config.target.baseUrl}${config.target.generatePath || '/'}`, {
-        waitUntil: 'domcontentloaded',
-        timeout: config.browser.navigationTimeoutMs,
-      })
-      .catch(() => {});
-    await kiralama.page.waitForTimeout(6000);
-
-    const tarayiciCerezleri = await kiralama.context.cookies(config.target.baseUrl);
     const onceki = sessionStore.get(false);
     const cer = oturumCereziniBul(onceki);
+    if (!cer) return { ok: false, sebep: 'oturum çerezi yok' };
+
+    // 1) Tarayıcıya "süresi dolmuş" kopyayı yaz → site kendi istemcisiyle jetonu yenilesin
+    const zorlama = yenilemeIcinCerezler(onceki);
+    if (zorlama.length) await kiralama.context.addCookies(zorlama).catch(() => {});
+
+    // 2) Sayfayı aç; çerez değişene kadar bekle (site istemcisi ~dakika içinde yeniler)
+    const url = `${config.target.baseUrl}${config.target.generatePath || '/'}`;
+    await kiralama.page.goto(url, { waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch(() => {});
+
     const kok = config.session.cookieName.replace(/\.[0-9]+$/, '');
-    const gelenler = {};
-    for (const c of tarayiciCerezleri) {
-      if (c.name !== config.session.cookieName && !(c.name.startsWith(`${kok}.`) && /^\d+$/.test(c.name.slice(kok.length + 1)))) continue;
-      gelenler[c.name] = c.value;
+    const parcaMi = (ad) => ad === config.session.cookieName || (ad.startsWith(`${kok}.`) && /^\d+$/.test(ad.slice(kok.length + 1)));
+    const cerezleriTopla = async () => {
+      const liste = await kiralama.context.cookies(config.target.baseUrl);
+      const harita = {};
+      for (const c of liste) if (parcaMi(c.name)) harita[c.name] = c.value;
+      return harita;
+    };
+
+    let gelenler = await cerezleriTopla();
+    const bitis = Date.now() + config.session.browserRefreshWaitMs;
+    let tur = 0;
+    while (Date.now() < bitis && (!gelenler[config.session.cookieName] || gelenler[config.session.cookieName] === cer.value)) {
+      tur += 1;
+      await kiralama.page.waitForTimeout(5000);
+      gelenler = await cerezleriTopla();
+      // 25 sn'de bir sayfayı tazele — ilk açılışta yenileme tetiklenmediyse şansı artırır
+      if (tur % 5 === 0 && gelenler[config.session.cookieName] === cer.value) {
+        await kiralama.page.reload({ waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch(() => {});
+      }
     }
+
     if (!gelenler[config.session.cookieName]) return { ok: false, sebep: 'tarayıcıda oturum çerezi bulunamadı' };
-    if (cer && cer.value === gelenler[config.session.cookieName]) {
-      return { ok: false, sebep: 'tarayıcı çerezi değiştirmedi (yenileme tetiklenmedi)' };
+    if (gelenler[config.session.cookieName] === cer.value) {
+      return { ok: false, sebep: `tarayıcı çerezi değiştirmedi (yenileme tetiklenmedi, ${Math.round((config.session.browserRefreshWaitMs) / 1000)} sn beklendi)` };
     }
 
     const yeniDurum = cerezleriUygula(onceki, gelenler);
     const bilgi = oturumCoz({ value: birlesikCerezDegeri(yeniDurum) });
+    if (!bilgi.ok) return { ok: false, sebep: `tarayıcıdan gelen yeni çerez çözülemedi: ${bilgi.sebep}` };
     await oturumuKaliciYaz(yeniDurum, { neden: 'tarayıcı' });
     return { ok: true, yol: 'tarayıcı', yeniKalanDk: bilgi.kalanDk ?? null, refreshVar: bilgi.refreshVar ?? null };
   } finally {
