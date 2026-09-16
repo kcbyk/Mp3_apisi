@@ -158,16 +158,68 @@ async function jsButonTikla(page, adlar) {
   return page
     .evaluate((isimler) => {
       const hedefler = isimler.map((x) => x.toLowerCase());
-      const btn = [...document.querySelectorAll('button,[role=button]')].find((b) => {
-        const t = (b.innerText || b.getAttribute('aria-label') || '').trim().toLowerCase();
-        return t && b.getBoundingClientRect().width > 1 && !b.disabled && hedefler.includes(t);
-      });
-      if (!btn) return null;
-      btn.scrollIntoView?.({ block: 'center' });
-      btn.click();
-      return (btn.innerText || '').trim().slice(0, 30);
+      const butonlar = [...document.querySelectorAll('button,[role=button],[type=button],[type=submit]')].filter(
+        (b) => b.getBoundingClientRect().width > 1 && !b.disabled,
+      );
+      for (const hedef of hedefler) {
+        const btn =
+          butonlar.find((b) => (b.innerText || '').trim().toLowerCase() === hedef) ??
+          butonlar.find((b) => (b.getAttribute('aria-label') || '').trim().toLowerCase() === hedef) ??
+          butonlar.find((b) => (b.innerText || '').trim().toLowerCase().includes(hedef)) ??
+          butonlar.find((b) => (b.getAttribute('aria-label') || '').trim().toLowerCase().includes(hedef));
+        if (btn) {
+          btn.scrollIntoView?.({ block: 'center' });
+          btn.click();
+          return (btn.innerText || btn.getAttribute('aria-label') || '').trim().slice(0, 30);
+        }
+      }
+      return null;
     }, adlar)
     .catch(() => null);
+}
+
+/**
+ * Çerez tercih modalını DOM seviyesinde zorla kapatır (radix katmanı pointer
+ * olaylarını emdiği için Playwright tıklaması işe yaramıyor).
+ * Sıra: Save Preferences → Cancel → Close → Escape.
+ * @returns {Promise<{kapandi:boolean, tiklanan:string|null}>}
+ */
+async function cerezTercihDiyaloguZorlaKapat(page) {
+  for (let tur = 1; tur <= 3; tur += 1) {
+    const sonuc = await page
+      .evaluate((katman) => {
+        const gorunur = (e) => !!e && e.offsetParent !== null && e.getBoundingClientRect().width > 1;
+        const dialogVar = [...document.querySelectorAll('div,section,aside,form')].some(
+          (e) => gorunur(e) && /manage cookie preferences/i.test((e.innerText || '').slice(0, 200)),
+        );
+        if (!dialogVar) return { kapandi: true, tiklanan: null };
+
+        const oncelik = ['save preferences', 'kaydet', 'cancel', 'iptal', 'close', 'dismiss', 'kapat', 'accept all', 'accept'];
+        const butonlar = [...document.querySelectorAll('button,[role=button]')].filter((b) => gorunur(b) && !b.disabled);
+        for (const aranan of oncelik) {
+          const bul =
+            butonlar.find((b) => (b.innerText || '').trim().toLowerCase() === aranan) ??
+            butonlar.find((b) => (b.getAttribute('aria-label') || '').trim().toLowerCase() === aranan) ??
+            butonlar.find((b) => (b.innerText || '').trim().toLowerCase().includes(aranan));
+          if (bul) {
+            bul.scrollIntoView?.({ block: 'center' });
+            bul.click();
+            return { kapandi: false, tiklanan: aranan, tur: katman };
+          }
+        }
+        // Buton bulunamadı → modal köküne Escape gönder
+        for (const olay of ['keydown', 'keyup']) {
+          document.dispatchEvent(new KeyboardEvent(olay, { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true }));
+        }
+        return { kapandi: false, tiklanan: 'escape', tur: katman };
+      }, tur)
+      .catch(() => ({ kapandi: false, tiklanan: null }));
+    if (sonuc.kapandi) return { kapandi: true, tiklanan: sonuc.tiklanan ?? null };
+    if (sonuc.tiklanan) logger.info?.({ mod: 'arenaScraper', tur: sonuc.tur, yol: sonuc.tiklanan }, 'çerez tercih modalı kapatılmaya çalışıldı');
+    await microPause(0.8);
+    if (!(await cerezTercihDiyaloguAcikMi(page))) return { kapandi: true, tiklanan: sonuc.tiklanan ?? null };
+  }
+  return { kapandi: false, tiklanan: null };
 }
 
 /**
@@ -269,21 +321,12 @@ async function dismissConsent(page) {
       await microPause(0.6);
     }
 
-    // Çerez tercih modalı hâlâ açıksa: kaydet → iptal → Escape sırasıyla zorla kapat
+    // Çerez tercih modalı hâlâ açıksa DOM seviyesinde zorla kapat
     if (await cerezTercihDiyaloguAcikMi(page)) {
-      for (const yol of ['kaydet', 'iptal', 'escape']) {
-        if (yol === 'escape') {
-          await page.keyboard.press('Escape').catch(() => {});
-        } else {
-          const etiketler = yol === 'kaydet' ? ['Save Preferences', 'Accept All Cookies'] : ['Cancel', 'Close'];
-          await jsButonTikla(page, etiketler).catch(() => {});
-        }
-        await microPause(0.9);
-        if (!(await cerezTercihDiyaloguAcikMi(page))) {
-          logger.info?.({ mod: 'arenaScraper', yol }, 'çerez tercih diyaloğu kapatıldı');
-          break;
-        }
-      }
+      const kap = await cerezTercihDiyaloguZorlaKapat(page);
+      if (kap.kapandi) logger.info?.({ mod: 'arenaScraper', yol: kap.tiklanan }, 'çerez tercih modalı kapatıldı');
+      else logger.warn?.({ mod: 'arenaScraper' }, 'çerez tercih modalı kapanmadı — gönderim engellenebilir');
+      await microPause(0.6);
     }
 
     // Kapı kapandıysa gerçekten oturum var mı? (canlı bulgu: kapıdan sonra giriş duvarı)
@@ -573,6 +616,10 @@ async function clickGenerate(page, promptText = '') {
 
   // Canlı bulgu (2026-09-16): çerez tercih modalı gönder düğmesini kalıcı olarak
   // `disabled` bırakıyor → gönderimden hemen önce bir kez daha kapatmayı dene.
+  if (await cerezTercihDiyaloguAcikMi(page).catch(() => false)) {
+    await cerezTercihDiyaloguZorlaKapat(page).catch(() => {});
+    await microPause(0.5);
+  }
   if (await onayKapisiAcikMi(page).catch(() => false)) await dismissConsent(page).catch(() => {});
 
   // Buton disabled olabilir (prompt henüz React state'ine işlenmemiş)
@@ -823,4 +870,13 @@ function dryRunResult(norm, taskId, t0) {
   };
 }
 
-export { saveErrorScreenshot, gotoWithChallengeCheck, dismissConsent, assertSessionValid, ensureGeneratorOpen, girisDuvariniTespit };
+export {
+  saveErrorScreenshot,
+  gotoWithChallengeCheck,
+  dismissConsent,
+  assertSessionValid,
+  ensureGeneratorOpen,
+  girisDuvariniTespit,
+  cerezTercihDiyaloguAcikMi,
+  cerezTercihDiyaloguZorlaKapat,
+};

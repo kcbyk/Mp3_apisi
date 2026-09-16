@@ -13,7 +13,13 @@ import { generateAsset, selectorStats } from '../services/assetService.js';
 import { browserManager } from '../automation/browserManager.js';
 import { sessionStore, normalizeStorageState } from '../automation/sessionStore.js';
 import { oturumDurumu, oturumuYenile } from '../automation/sessionRefresh.js';
-import { loadSelectors, gotoWithChallengeCheck, dismissConsent, girisDuvariniTespit } from '../scrapers/arenaScraper.js';
+import {
+  loadSelectors,
+  gotoWithChallengeCheck,
+  dismissConsent,
+  girisDuvariniTespit,
+  cerezTercihDiyaloguAcikMi,
+} from '../scrapers/arenaScraper.js';
 import { AppError, ValidationError } from '../errors.js';
 import { logger } from '../utils/logger.js';
 import { jobStore } from '../services/jobStore.js';
@@ -197,8 +203,18 @@ router.post(
       const yanit = await page.goto(hedef, { waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch((e) => ({ durumHatasi: String(e.message).slice(0, 120) }));
       rapor.http = yanit?.status?.() ?? null;
       rapor.hedef = hedef;
+      const cerezOnce = new Set((await page.context().cookies()).map((c) => c.name));
       await page.waitForTimeout(4000);
+      rapor.cerezModaliIlk = await cerezTercihDiyaloguAcikMi(page).catch(() => null);
       await dismissConsent(page).catch(() => {});
+      rapor.cerezModaliSonra = await cerezTercihDiyaloguAcikMi(page).catch(() => null);
+      // Onay/yenileme izleri: hangi çerez/localStorage anahtarı doğdu? (değer yok, sadece ad)
+      rapor.cerezIzi = {
+        yeniCerezler: (await page.context().cookies()).map((c) => c.name).filter((n) => !cerezOnce.has(n)),
+        localStorageAnahtarlari: await page
+          .evaluate(() => Object.keys(window.localStorage || {}).slice(0, 20))
+          .catch(() => []),
+      };
       rapor.url = page.url();
       rapor.girisDuvari = await girisDuvariniTespit(page).catch((e) => `hata: ${String(e.message).slice(0, 80)}`);
 
