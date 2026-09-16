@@ -66,7 +66,7 @@ export function buildUrl(params, { cfg = config.imageProvider } = {}) {
   const q = new URLSearchParams({
     width: String(width),
     height: String(height),
-    model: cfg.model, // kanonik id'deki "/" URLSearchParams ile %2F'a kodlanır (gen endpoint kabul ediyor)
+    model: (typeof params.model === 'string' && params.model.trim()) ? params.model.trim() : cfg.model, // kanonik id'deki "/" URLSearchParams ile %2F'a kodlanır (gen endpoint kabul ediyor)
     seed: String(seed),
     nologo: 'true',
   });
@@ -152,7 +152,7 @@ export async function pollinationsGenerate(params, { taskId = 'anon', delivery, 
   const ext = { 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/avif': '.avif' }[contentType] || '.jpg';
   const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
   const ms = Date.now() - t0;
-  log.info({ endpoint, width, height, model: cfg.model, seed, bytes: buffer.length, ms }, 'görsel üretildi');
+  log.info({ endpoint, width, height, model: (typeof params.model === 'string' && params.model.trim()) ? params.model.trim() : cfg.model, seed, bytes: buffer.length, ms }, 'görsel üretildi');
   onProgress?.({ step: 'pollinations_fetch', ms });
 
   // Teslim biçimi — deliverArtifact ile aynı anlambilim.
@@ -186,7 +186,7 @@ export async function pollinationsGenerate(params, { taskId = 'anon', delivery, 
       task_id: taskId,
       elapsed_ms: ms,
       endpoint,
-      model: cfg.model,
+      model: (typeof params.model === 'string' && params.model.trim()) ? params.model.trim() : cfg.model,
       width,
       height,
       seed,

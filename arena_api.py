@@ -149,6 +149,8 @@ def _arena_cagri(veri, cfg, asenkron=False):
         "delivery": veri.get("delivery") or cfg["delivery"],
         "provider": veri.get("provider") or cfg["provider"],   # pollinations | ovh | auto | arena
     }
+    if veri.get("model"):
+        govde["model"] = str(veri["model"]).strip()[:160]          # istek bazlı model (pollinations)
     if asenkron:
         govde["async"] = True
     r = _istek("POST", "/api/v1/generate-asset", cfg, json=govde)
@@ -247,6 +249,7 @@ def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
             "style": d.get("style") or d.get("stil") or "",
             "delivery": d.get("delivery"),
             "provider": d.get("provider") or d.get("saglayici"),
+            "model": d.get("model"),
         }
         asenkron = bool(d.get("async")) or d.get("bekleme") == 0
         cfg = _cfg()
@@ -304,6 +307,7 @@ def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
             "style": _duzelt(a.get("stil") or a.get("style") or ""),
             "delivery": a.get("delivery"),
             "provider": a.get("saglayici") or a.get("provider"),
+            "model": a.get("model"),
         }
         asenkron = a.get("bekleme") == "0" or a.get("async") in ("1", "true")
         cfg = _cfg()

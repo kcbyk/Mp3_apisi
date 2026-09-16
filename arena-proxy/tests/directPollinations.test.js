@@ -77,6 +77,19 @@ test('buildUrl parametreleri URL\'e işler', () => {
   assert.equal(height, 768);
 });
 
+test('istek bazlı model, env varsayılanını ezer (model passthrough)', () => {
+  const { url } = buildUrl(
+    { prompt: 'kedi', aspectRatio: '1:1', model: 'openai/gpt-image-1-mini' },
+    { cfg: { baseUrl: 'http://x.local/prompt', model: 'flux', token: null } },
+  );
+  assert.match(url, /model=openai%2Fgpt-image-1-mini/);
+  const { url: url2 } = buildUrl(
+    { prompt: 'kedi', aspectRatio: '1:1', model: '   ' },
+    { cfg: { baseUrl: 'http://x.local/prompt', model: 'flux', token: null } },
+  );
+  assert.match(url2, /model=flux/);
+});
+
 test('uçtan uca: sahte sunucudan görsel iner ve persist edilir', async () => {
   const sonuc = await pollinationsGenerate(
     { prompt: 'a cute cat', aspectRatio: '1:1', style: '', negativePrompt: 'çirkin', seed: 7 },

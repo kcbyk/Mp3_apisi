@@ -90,6 +90,9 @@ export async function generateAsset(rawParams, { requestId = crypto.randomUUID()
   let params;
   try {
     params = normalizeParams(rawParams);
+    if (typeof rawParams?.model === 'string' && rawParams.model.trim()) {
+      params.model = rawParams.model.trim().slice(0, 160);
+    }
   } catch (err) {
     metrics.inc('requests_failed');
     metrics.fail(err.code ?? 'VALIDATION_ERROR');

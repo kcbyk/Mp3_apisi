@@ -527,3 +527,20 @@ Kotaya takılmamak için sağlayıcı sayısı ikiye çıktı ve hepsi tek çat�
   `meta.size_note` açıklaması eklenir.
 - 401-in-canlı-test notu: bogus seed anahtarı → zincir `pollinations:401 → ovh:basarili`
   ile OVH'den döndü; gerçek çıktı /tmp'de 1.2MB PNG olarak görüldü.
+
+## 15) model passthrough + yeni varsayılan: gpt-image-1-mini (2026-09-16 gecesi)
+
+Bedava seed diliminde çalışan stüdyo kalitesi keşfedildi (canlı doğrulandı):
+
+- **Yeni varsayılan `POLLINATIONS_MODEL=openai/gpt-image-1-mini`** — 1024×1024 ~25sn,
+  fotoğraf kalitesi flux.1-schnell'den belirgin üstün; ücret minik (image-token başına
+  kuruşun binde bini civarı — haftalık bedava damladan ~200+ görsel).
+- Çalışan alternatifler (bedavada): `microsoft/mai-image-2.5-flash` (~18sn, kompozisyon iyi),
+  `black-forest-labs/flux.1-schnell` (~8sn, en bol kota), `z-image-turbo` (~7sn).
+- Ücretli bakiye isteyenler (402 döner): `openai/gpt-image-2.5-flare/sunburst`,
+  `google/gemini-2.5-flash-image` (nano banana), gemini-3.x, topluluk `:paid` sürümleri —
+  enter.pollinations.ai'den 5$ takviye ile açılır.
+- **Request parametresi `model`** (ops., maks 160 karakter): `POST /api/v1/generate-asset`
+  `{"model":"z-image-turbo", ...}` → sadece `pollinations` düğümünde geçerli; ovh/arena'da yok.
+  Kural: istek modeli > `POLLINATIONS_MODEL` env'si > alias varsayılanı.
+- Site köprüsünde de `&model=...` / POST `"model"` desteklenir (`/dokuman` güncel).
