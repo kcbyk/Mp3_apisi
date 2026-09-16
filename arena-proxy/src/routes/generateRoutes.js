@@ -4,8 +4,10 @@
  */
 import { Router } from 'express';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
-import { config } from '../config/index.js';
+import { config, ROOT_DIR } from '../config/index.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { generateAsset, selectorStats } from '../services/assetService.js';
 import { browserManager } from '../automation/browserManager.js';
@@ -100,6 +102,44 @@ router.delete(
   asyncHandler(async (req, res) => {
     const deleted = jobStore.delete(req.params.id);
     res.json({ success: deleted, job_id: req.params.id, status: deleted ? 'deleted' : 'not_found' });
+  }),
+);
+
+/* ------------------- GET /debug/screenshot (son hata görüntüsü) ----------- */
+/**
+ * Canlıda hata ayıklama: konteynerdeki en yeni ekran görüntüsünü base64 döner.
+ * API anahtarı gerektirir (diğer uçlarla aynı middleware).
+ * Kullanım: GET /api/v1/debug/screenshot            → en yeni
+ *           GET /api/v1/debug/screenshot?n=2        → sondan 2.
+ */
+router.get(
+  '/debug/screenshot',
+  asyncHandler(async (req, res) => {
+    const n = Math.max(1, Math.min(20, Number(req.query.n) || 1));
+    const dir = config.paths?.screenshotDir || path.join(ROOT_DIR, 'data', 'screenshots');
+    let dosyalar = [];
+    try {
+      dosyalar = fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith('.png'))
+        .map((f) => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs }))
+        .sort((a, b) => b.t - a.t);
+    } catch {
+      /* dizin yok */
+    }
+    if (!dosyalar.length) return res.json({ success: true, dosya: null, adet: 0 });
+    const sec = dosyalar[Math.min(n - 1, dosyalar.length - 1)];
+    const tam = path.join(dir, sec.f);
+    const buf = fs.readFileSync(tam);
+    res.json({
+      success: true,
+      adet: dosyalar.length,
+      dosya: sec.f,
+      zaman: new Date(sec.t).toISOString(),
+      boyut: buf.length,
+      image_base64: buf.toString('base64'),
+      dosyalar: dosyalar.slice(0, 10).map((d) => d.f),
+    });
   }),
 );
 
