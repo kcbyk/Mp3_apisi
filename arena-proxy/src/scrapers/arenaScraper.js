@@ -309,25 +309,43 @@ async function cerezTercihDiyaloguAcikMi(page) {
 async function cerezOnayiniKur(page) {
   const cerezVar = async () =>
     (await page.context().cookies(config.target.baseUrl)).some((c) => c.name === 'cookie-preferences');
-  if (await cerezVar()) return { kuruldu: true, zatenVardi: true };
+  let kuruldu = await cerezVar();
+  // ÖNEMLİ: çerez olsa bile "Terms of Use" katmanı açık olabilir ve besteyi
+  // tamamen kilitler (canlı bulgu) → her durumda katmanı kapatmayı dene.
 
   const temel = `${config.target.baseUrl}${config.target.generatePath || '/'}`;
   for (const url of [`${temel}?manage-cookies=true`, temel, `${temel}?manage-cookies=true`]) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch(() => {});
     await microPause(2.5);
     for (let tur = 1; tur <= 3; tur += 1) {
-      // (a) Şartlar katmanı açıksa önce onu onayla (Save Preferences bu yüzden kilitli)
-      await jsButonTikla(page, ['Agree', 'I Agree', 'I understand', 'Accept Cookies', 'Accept All Cookies']).catch(() => {});
+      // (a) Şartlar katmanı: "Agree" (Save Preferences bundan önce etkin değil)
+      const tiklanan = await jsButonTikla(page, ['Agree', 'I Agree', 'I understand', 'Accept Cookies', 'Accept All Cookies', 'Accept All']).catch(() => null);
+      // (b) Diyalog "Or hit Enter on your keyboard to agree" diyorsa klavye yedeği
+      if (!tiklanan) await page.keyboard.press('Enter').catch(() => {});
       await microPause(1.2);
-      // (b) Tercihleri kaydet
+      // (c) Tercihleri kaydet
       await jsButonTikla(page, ['Save Preferences', 'Accept Cookies', 'Accept All Cookies', 'Kaydet']).catch(() => {});
-      // (c) Hâlâ açıksa klavye yedeği ("Or hit Enter on your keyboard to agree")
-      await page.keyboard.press('Enter').catch(() => {});
-      await microPause(1.5);
-      if (await cerezVar()) return { kuruldu: true, tur, url: page.url() };
+      await microPause(1.2);
+      if (await cerezVar()) kuruldu = true;
+      const acik = await blokKatmanVarMi(page);
+      logger.info?.({ mod: 'arenaScraper', tur, tiklanan, cerez: kuruldu, katmanAcik: acik }, 'onay kurulumu turu');
+      if (!acik) return { kuruldu, tur, url: page.url() };
     }
   }
-  return { kuruldu: await cerezVar() };
+  return { kuruldu, katmanAcik: await blokKatmanVarMi(page).catch(() => null) };
+}
+
+/** Sayfada gönderimi engelleyen bir onay/şartlar katmanı var mı? */
+async function blokKatmanVarMi(page) {
+  return page
+    .evaluate(() => {
+      const gorunur = (e) => !!e && e.offsetParent !== null && e.getBoundingClientRect().width > 1;
+      const re = /manage cookie preferences|this website uses cookies|accept cookies|terms of use|privacy policy|by clicking .?agree|i understand/i;
+      return [...document.querySelectorAll("[role='dialog'],[role='alertdialog'],[aria-modal='true']")]
+        .filter(gorunur)
+        .some((e) => re.test((e.innerText || '').slice(0, 400)));
+    })
+    .catch(() => false);
 }
 
 async function onayKapisiAcikMi(page) {
@@ -338,6 +356,7 @@ async function onayKapisiAcikMi(page) {
     })
     .catch(() => false);
   if (metinKapisi) return true;
+  if (await blokKatmanVarMi(page)) return true;
   return cerezTercihDiyaloguAcikMi(page);
 }
 
@@ -917,6 +936,7 @@ function dryRunResult(norm, taskId, t0) {
 export {
   saveErrorScreenshot,
   cerezOnayiniKur,
+  blokKatmanVarMi,
   gotoWithChallengeCheck,
   dismissConsent,
   assertSessionValid,
