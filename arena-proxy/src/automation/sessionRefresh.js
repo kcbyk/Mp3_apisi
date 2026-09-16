@@ -542,8 +542,24 @@ export async function tarayiciCerezleriniYakala(context, { neden = 'görev' } = 
     const cerezler = await context.cookies(config.target.baseUrl);
     if (!cerezler.length) return { degisti: false, sebep: 'çerez yok' };
     const mevcut = sessionStore.get(false);
+
+    // localStorage da taşınır: arena.ai çerez tercihini/şart onayını burada
+    // tutuyor; saklanmazsa her yeni context'te onay katmanları yeniden dayatılıyor
+    // ve beste (composer) kilitli kalıyor (canlı bulgu 2026-09-16).
+    const sayfalar = context.pages();
+    let yerelDepo = [];
+    if (sayfalar.length) {
+      yerelDepo = await sayfalar[0]
+        .evaluate(() => Object.entries(window.localStorage || {}).map(([name, value]) => ({ name, value: String(value) })))
+        .catch(() => []);
+    }
+    const originlar = yerelDepo.length
+      ? [{ origin: new URL(config.target.baseUrl).origin, localStorage: yerelDepo }, ...(mevcut.origins || []).filter((o) => o.origin !== new URL(config.target.baseUrl).origin)]
+      : mevcut.origins;
+
     const yeniDurum = {
       ...mevcut,
+      origins: originlar,
       cookies: cerezler.map((c) => ({
         name: c.name,
         value: c.value,
@@ -557,7 +573,13 @@ export async function tarayiciCerezleriniYakala(context, { neden = 'görev' } = 
     };
     const eski = birlesikCerezDegeri(mevcut);
     const yeni = birlesikCerezDegeri(yeniDurum);
-    if (yeni && yeni === eski) return { degisti: false };
+    const depoDegisti = JSON.stringify(yeniDurum.origins || []) !== JSON.stringify(mevcut.origins || []);
+    if (yeni && yeni === eski && !depoDegisti) return { degisti: false };
+    if (yeni && yeni === eski && depoDegisti) {
+      await oturumuKaliciYaz(yeniDurum, { neden: `${neden}:localStorage` });
+      log.info({ neden, anahtar: (yerelDepo || []).length }, 'localStorage yakalandı ve kaydedildi');
+      return { degisti: true, sadeceDepo: true };
+    }
     const bilgi = oturumCoz({ value: yeni });
     if (!bilgi.ok) {
       log.warn({ sebep: bilgi.sebep, neden }, 'tarayıcıdan gelen çerez çözülemedi — yazılmadı');
