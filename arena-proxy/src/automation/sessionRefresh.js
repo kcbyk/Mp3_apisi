@@ -343,13 +343,12 @@ export async function tarayiciIleYenile({ taskId = 'session-refresh' } = {}) {
     const cer = oturumCereziniBul(onceki);
     if (!cer) return { ok: false, sebep: 'oturum çerezi yok' };
 
-    // 1) Tarayıcıya "süresi dolmuş" kopyayı yaz → site kendi istemcisiyle jetonu yenilesin
-    const zorlama = yenilemeIcinCerezler(onceki);
-    if (zorlama.length) await kiralama.context.addCookies(zorlama).catch(() => {});
-    // Karşılaştırma bu referansa göre yapılır: bizim yazdığımız kopya "yeni çerez" sayılmamalı
-    const zorlanmisDeger = zorlama.find((c) => c.name === config.session.cookieName)?.value ?? cer.value;
+    // NOT: Çerezi "süresi dolmuş" göstermeye ÇALIŞMA — arena.ai bunu yenileme değil
+    // "oturum bitti" sayıp çerezleri siliyor (canlıda doğrulandı). Gerçek tarayıcı gibi
+    // sayfayı açık tutup uygulamanın KENDİ yenilemesini bekliyoruz.
+    const zorlanmisDeger = cer.value;
 
-    // 2) Sayfayı aç; çerez değişene kadar bekle (site istemcisi ~dakika içinde yeniler)
+    // Sayfayı aç; çerez kendiliğinden değişene kadar bekle
     const url = `${config.target.baseUrl}${config.target.generatePath || '/'}`;
     await kiralama.page.goto(url, { waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch(() => {});
 
@@ -367,10 +366,16 @@ export async function tarayiciIleYenile({ taskId = 'session-refresh' } = {}) {
     let tur = 0;
     while (Date.now() < bitis && (!gelenler[config.session.cookieName] || gelenler[config.session.cookieName] === zorlanmisDeger)) {
       tur += 1;
-      await kiralama.page.waitForTimeout(5000);
-      gelenler = await cerezleriTopla();
-      // 25 sn'de bir sayfayı tazele — ilk açılışta yenileme tetiklenmediyse şansı artırır
-      if (tur % 5 === 0 && gelenler[config.session.cookieName] === zorlanmisDeger) {
+      await kiralama.page.waitForTimeout(10000);
+      // Sayfa "oturum bitti" diyerek çerezi sildiyse erken çık (nöbeti boşa uzatma)
+      const simdiki = await cerezleriTopla();
+      if (!simdiki[config.session.cookieName] && tur >= 6) {
+        log.warn({ tur, sn: tur * 10 }, 'tarayıcı oturum çerezini sildi (jeton reddedildi?)');
+        return { ok: false, sebep: 'tarayıcı oturum çerezini sildi (yenileme reddedildi)' };
+      }
+      gelenler = simdiki;
+      // 5 dk'da bir sayfayı tazele — ilk açılışta istemci yenilemediyse şansı artırır
+      if (tur % 30 === 0 && gelenler[config.session.cookieName] === zorlanmisDeger) {
         await kiralama.page.reload({ waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch(() => {});
       }
     }
