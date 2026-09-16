@@ -154,6 +154,12 @@ const schema = z.object({
   POLLINATIONS_MODEL: str('flux'), // alias da olur: flux→flux.1-schnell | z-image-turbo | turbo ...
   POLLINATIONS_TOKEN: str(''),     // opsiyonel seed-tier anahtar (yoksa anon katman)
   POLLINATIONS_TIMEOUT_MS: num(180_000),
+  // Yedek sağlayıcı: OVHcloud AI Endpoints — anon erişimli ücretsiz SDXL (kayıt yok, kart yok).
+  // Ana anahtar kotaları dolunca "auto" zinciri buraya düşer.
+  OVH_BASE_URL: str('https://oai.endpoints.kepler.ai.cloud.ovh.net'),
+  OVH_MODEL: str('stable-diffusion-xl-base-v10'),
+  OVH_TOKEN: str(''),           // opsiyonel: ücretsiz OVH hesabıyla rate-limit artar
+  OVH_TIMEOUT_MS: num(120_000),
   ARTIFACT_PUBLIC_BASE_URL: str(''),
   MAX_DOWNLOAD_BYTES: num(26_214_400),
   ALLOWED_ASSET_HOSTS: list([]),
@@ -294,12 +300,18 @@ export const config = {
     deleteAfterMs: env.DELETE_ARTIFACT_AFTER_MS,
   },
   imageProvider: {
-    name: env.IMAGE_PROVIDER === 'pollinations' ? 'pollinations' : 'arena',
+    name: ['arena', 'pollinations', 'ovh', 'auto'].includes(env.IMAGE_PROVIDER) ? env.IMAGE_PROVIDER : 'arena',
     baseUrl: env.POLLINATIONS_BASE_URL.replace(/\/+$/, ''),
     genBaseUrl: env.POLLINATIONS_GEN_BASE_URL.replace(/\/+$/, ''),
     model: env.POLLINATIONS_MODEL,
     token: env.POLLINATIONS_TOKEN || null,
     timeoutMs: env.POLLINATIONS_TIMEOUT_MS,
+  },
+  ovh: {
+    baseUrl: env.OVH_BASE_URL.replace(/\/+$/, ''),
+    model: env.OVH_MODEL,
+    token: env.OVH_TOKEN || null,
+    timeoutMs: env.OVH_TIMEOUT_MS,
   },
 };
 

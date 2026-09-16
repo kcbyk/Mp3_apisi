@@ -80,9 +80,9 @@ export function buildUrl(params, { cfg = config.imageProvider } = {}) {
  * @param {{prompt:string, aspectRatio?:string, style?:string, negativePrompt?:string, seed?:number}} params
  * @param {{taskId?:string, delivery?:string, signal?:AbortSignal, onProgress?:Function}} opts
  */
-export async function pollinationsGenerate(params, { taskId = 'anon', delivery, signal, onProgress } = {}) {
+export async function pollinationsGenerate(params, { taskId = 'anon', delivery, signal, onProgress, cfgOverride } = {}) {
   const t0 = Date.now();
-  const cfg = config.imageProvider;
+  const cfg = cfgOverride || config.imageProvider;
   const { url, width, height, seed, promptEtkin, tokenMode, endpoint } = buildUrl(params);
   onProgress?.({ step: 'pollinations_fetch', ms: 0 });
 

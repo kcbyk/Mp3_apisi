@@ -511,3 +511,19 @@ hepsi bayt-bayt AYNI "sana" 768px dosyasını döndürüyor ve sağ altta filigr
 - Anahtarlı modda URL'ler dışarıya kapalıdır → `delivery:'url'` isteği otomatik `file`'a
   düşürülür (görsel zaten indirildiği için kayıp yok; `meta.delivery_note` açıklar).
 - Anon kalmak isterseniz `POLLINATIONS_TOKEN` boş bırakın: eski davranış aynen korunur.
+
+## 14) "auto" zincir + OVH yedeği (2026-09-16 gecesi)
+
+Kotaya takılmamak için sağlayıcı sayısı ikiye çıktı ve hepsi tek çatı altında:
+
+- **Yeni sağlayıcı `ovh`**: OVHcloud AI Endpoints, anon (anahtarsız) ücretsiz SDXL —
+  canlı doğrulandı: 1024×1024 PNG, ~12-60sn, filigransız, kayıt/kart YOK (2 istek/dk anon).
+- **Yeni mod `auto`** (`IMAGE_PROVIDER=auto` ya da istekte `{"provider":"auto"}`):
+  `pollinations(seed) → ovh → pollinations-anon`. Bir halka 402/429/5xx/zaman aşımıyla
+  düşünce sıradakine geçilir; sonuç `meta.fallback_attempts` dizisinde izlenir.
+  Anahtar YOKSA sıra `ovh → pollinations-anon` olur (anon flux yerine SDXL tercih edilir).
+- Boyut gerçeği: OVH API şeması 7 kova listeliyor ama servis **yalnız 1024x1024** kabul
+  ediyor (400: "Only 1024x1024 size is currently supported"). 1:1 dışı oranlarda
+  `meta.size_note` açıklaması eklenir.
+- 401-in-canlı-test notu: bogus seed anahtarı → zincir `pollinations:401 → ovh:basarili`
+  ile OVH'den döndü; gerçek çıktı /tmp'de 1.2MB PNG olarak görüldü.

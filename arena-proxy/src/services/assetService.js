@@ -15,6 +15,8 @@ import { oturumDurumu, yenilemeGerekliMi, oturumuYenile, tarayiciCerezleriniYaka
 import { runGeneration, normalizeParams, loadSelectors } from '../scrapers/arenaScraper.js';
 import { deliverArtifact } from '../scrapers/artifactDelivery.js';
 import { pollinationsGenerate } from '../scrapers/directPollinations.js';
+import { ovhGenerate } from '../scrapers/directOvh.js';
+import { runImageChain, BROWSERLESS_PROVIDERS } from './imageChain.js';
 import { selectorReport } from '../utils/resilientSelector.js';
 import { AppError, SessionError, ValidationError } from '../errors.js';
 
@@ -103,19 +105,28 @@ export async function generateAsset(rawParams, { requestId = crypto.randomUUID()
   /*  Sağlayıcı seçimi (istek bazlı override > env varsayılanı)          */
   /*   - 'arena'        : klasik tarayıcı akışı (oturum + kuyruk)        */
   /*   - 'pollinations' : TARAYICISIZ HTTP API — Chromium'a hiç çıkma    */
+  /*   - 'ovh'          : TARAYICISIZ OVHcloud SDXL yedeği               */
+  /*   - 'auto'         : pollinations → ovh → pollinations-anon zinciri */
   /* ------------------------------------------------------------------ */
-  const provider = ['arena', 'pollinations'].includes(rawParams?.provider)
+  const provider = ['arena', 'pollinations', 'ovh', 'auto'].includes(rawParams?.provider)
     ? rawParams.provider
     : config.imageProvider.name;
 
-  if (provider === 'pollinations') {
+  if (provider !== 'arena') {
     try {
       const delivery = ['url', 'base64', 'file', 'both'].includes(rawParams?.delivery) ? rawParams.delivery : undefined;
-      const pkg = await pollinationsGenerate(params, { taskId, delivery, onProgress });
+      let pkg;
+      if (provider === 'auto') {
+        pkg = await runImageChain(params, { taskId, delivery, onProgress });
+      } else if (provider === 'ovh') {
+        pkg = await ovhGenerate(params, { taskId, delivery, onProgress });
+      } else {
+        pkg = await pollinationsGenerate(params, { taskId, delivery, onProgress });
+      }
       const elapsed = Date.now() - t0;
       metrics.inc('requests_success');
       metrics.observeLatency(elapsed);
-      log_.info({ elapsedMs: elapsed, provider: 'pollinations', delivery: pkg.artifact.delivery }, 'üretim başarılı');
+      log_.info({ elapsedMs: elapsed, provider: pkg.meta?.provider ?? provider, delivery: pkg.artifact.delivery }, 'üretim başarılı');
       return {
         success: true,
         image_url: pkg.artifact.image_url ?? null,
@@ -134,7 +145,7 @@ export async function generateAsset(rawParams, { requestId = crypto.randomUUID()
       metrics.inc('requests_failed');
       metrics.fail(err.code ?? err.name ?? 'UNKNOWN');
       const elapsed = Date.now() - t0;
-      log_.error({ err: err.message, code: err.code, elapsedMs: elapsed }, 'üretim başarısız (pollinations)');
+      log_.error({ err: err.message, code: err.code, elapsedMs: elapsed }, `üretim başarısız (${provider})`);
       if (err instanceof AppError) throw err;
       const wrapped = new AppError(err.message, { details: { name: err.name } });
       wrapped.stack = err.stack;
@@ -261,8 +272,8 @@ export function healthPayload() {
 
 export function readiness() {
   const problems = [];
-  // Tarayıcısız sağlayıcıda oturum dosyası gereksiz (Chromium da hiç açılmaz)
-  if (config.imageProvider.name !== 'pollinations' && !config.target.dryRun && config.session.mode === 'storage' && !sessionStore.exists()) {
+  // Tarayıcısız sağlayıcılarda oturum dosyası gereksiz (Chromium da hiç açılmaz)
+  if (!BROWSERLESS_PROVIDERS.has(config.imageProvider.name) && !config.target.dryRun && config.session.mode === 'storage' && !sessionStore.exists()) {
     problems.push('session_file_missing');
   }
   if (config.auth.enabled && config.auth.keys.length === 0) problems.push('auth_enabled_but_no_keys');
