@@ -111,14 +111,15 @@ export class TaskQueue {
       log.warn({ taskId, timeoutMs }, 'iş zaman aşımı → abort sinyali gönderiliyor');
       controller.abort(new JobTimeoutError(timeoutMs));
     }, timeoutMs);
+    killTimer.unref?.(); // zamanlayıcı süreci canlı tutmasın
 
     let lastError;
     const started = Date.now();
 
     try {
       return await this.queue.add(
-        () =>
-          pRetry(
+        () => {
+          const is = pRetry(
             async (attemptNumber) => {
               if (controller.signal.aborted) throw controller.signal.reason;
               try {
@@ -153,7 +154,19 @@ export class TaskQueue {
                 }
               },
             },
-          ),
+          );
+
+          // Takılı kalan gövde kuyruğu kilitlemesin: zaman aşımı/abort anında
+          // yarışı kaybettir → p-queue slot'u serbest kalır. Arka planda süren iş
+          // sayfayı bırakırsa browserManager bekçisi (watchdog) de devreye girer.
+          const iptal = new Promise((_, reddet) => {
+            if (controller.signal.aborted) return reddet(controller.signal.reason);
+            controller.signal.addEventListener('abort', () => reddet(controller.signal.reason), { once: true });
+            return undefined;
+          });
+          is.catch(() => {}); // yarışı kaybederse yutulmayan reddi önle
+          return Promise.race([is, iptal]);
+        },
         { signal: controller.signal },
       );
     } catch (err) {

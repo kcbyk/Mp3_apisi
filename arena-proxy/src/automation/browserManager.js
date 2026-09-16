@@ -247,13 +247,13 @@ export class BrowserManager {
         proxy: proxyOption(),
         ...baseContextOptions(),
       });
-      entry = { id: userDataDir, context, browser: null, persistent: true, createdAt: Date.now(), uses: 0, sessionVersion, dead: false, inUse: false, profileDir: userDataDir };
+      entry = { id: userDataDir, context, browser: null, persistent: true, createdAt: Date.now(), uses: 0, sessionVersion, dead: false, inUse: false, inUseSince: null, profileDir: userDataDir };
     } else {
       // --- Storage modu (önerilen): session dosyası her context'e enjekte edilir ---
       const browser = await this.ensureBrowser();
       const storageState = sessionStore.get(false);
       const context = await browser.newContext(baseContextOptions({ storageState }));
-      entry = { id: `ctx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, context, browser, persistent: false, createdAt: Date.now(), uses: 0, sessionVersion, dead: false, inUse: false };
+      entry = { id: `ctx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, context, browser, persistent: false, createdAt: Date.now(), uses: 0, sessionVersion, dead: false, inUse: false, inUseSince: null };
     }
 
     // Ortak context ayarları (her iki modda da entry.context üzerinden)
@@ -283,6 +283,7 @@ export class BrowserManager {
         continue;
       }
       entry.inUse = true;
+      entry.inUseSince = Date.now();
       return entry;
     }
 
@@ -291,6 +292,7 @@ export class BrowserManager {
     if (aliveCount < config.browser.maxContexts) {
       const entry = await this._createEntry();
       entry.inUse = true;
+      entry.inUseSince = Date.now();
       return entry;
     }
 
@@ -308,6 +310,7 @@ export class BrowserManager {
   async _destroyEntry(entry, reason) {
     entry.dead = true;
     entry.inUse = false;
+      entry.inUseSince = null;
     if (reason === 'stale' || reason === 'recycle') this.metrics.contextsRecycled += 1;
 
     const pages = this.pagesByEntry.get(entry.id);
@@ -362,6 +365,7 @@ export class BrowserManager {
       const waiter = this.waiters.shift();
       clearTimeout(waiter.timer);
       free.inUse = true;
+      free.inUseSince = Date.now();
       waiter.resolve(free);
     }
   }
@@ -395,6 +399,7 @@ export class BrowserManager {
     entry.uses += 1;
     entry.lastUsedAt = Date.now();
     this.metrics.pagesServed += 1;
+    this._startWatchdog();
     this.pagesByEntry.get(entry.id)?.add(page);
 
     if (config.browser.blockUrlPatterns.length || config.browser.blockFonts || config.browser.blockMedia) {
@@ -404,6 +409,41 @@ export class BrowserManager {
     page.setDefaultNavigationTimeout(config.browser.navigationTimeoutMs);
 
     return this._wrap(entry, page, taskId, reused);
+  }
+
+  /**
+   * Bekçi (watchdog): İstemci bağlantısı koparsa veya bir adım takılırsa, bir context
+   * jobTimeout'tan uzun süre "kullanımda" kalabilir ve tek context'li kurulumlarda
+   * kuyruğu kilitler (canlıda yaşandı). Bu bekçi takılı sayfaları zorla serbest
+   * bırakır; böylece kuyruk asla kalıcı olarak kilitlenmez.
+   * NOT: interval unref'lenir — testlerin/sürecin kapanmasını engellemez.
+   */
+  _startWatchdog() {
+    if (this._watchdog) return;
+    const periyotMs = 30_000;
+    const esikMs = (config.queue?.jobTimeoutMs ?? 120_000) + 90_000;
+    this._watchdog = setInterval(() => {
+      if (this.closing) return;
+      const simdi = Date.now();
+      for (const entry of this.pool) {
+        if (!entry.inUse || !entry.inUseSince) continue;
+        const takiliMs = simdi - entry.inUseSince;
+        if (takiliMs <= esikMs) continue;
+        log.error?.(
+          { entryId: entry.id, takiliMs, esikMs },
+          'watchdog: takılı sayfa zorla serbest bırakılıyor (kuyruk kilidi önlendi)',
+        );
+        this.metrics.pagesFailed += 1;
+        this.metrics.lastError = 'watchdog_force_release';
+        const sayfalar = this.pagesByEntry.get(entry.id);
+        if (sayfalar) {
+          for (const pg of sayfalar) pg.close({ runBeforeUnload: false }).catch(() => {});
+        }
+        entry.inUse = false;
+        entry.inUseSince = null;
+      }
+    }, periyotMs);
+    this._watchdog.unref?.();
   }
 
   _wrap(entry, page, taskId, reused) {
@@ -419,6 +459,7 @@ export class BrowserManager {
       }
       this.pagesByEntry.get(entry.id)?.delete(page);
       entry.inUse = false;
+      entry.inUseSince = null;
 
       if (entry.dead || this.closing) {
         await this._destroyEntry(entry, 'closed');
