@@ -11,7 +11,7 @@ import { logger } from '../utils/logger.js';
 import { taskQueue } from '../automation/queue.js';
 import { browserManager } from '../automation/browserManager.js';
 import { sessionStore } from '../automation/sessionStore.js';
-import { oturumDurumu, yenilemeGerekliMi, oturumuYenile } from '../automation/sessionRefresh.js';
+import { oturumDurumu, yenilemeGerekliMi, oturumuYenile, tarayiciCerezleriniYakala } from '../automation/sessionRefresh.js';
 import { runGeneration, normalizeParams, loadSelectors } from '../scrapers/arenaScraper.js';
 import { deliverArtifact } from '../scrapers/artifactDelivery.js';
 import { selectorReport } from '../utils/resilientSelector.js';
@@ -141,6 +141,9 @@ export async function generateAsset(rawParams, { requestId = crypto.randomUUID()
           ok = !(err.retryable ?? false) ? true : false; // retryable ise sayfa "başarısız" sayılır
           throw err;
         } finally {
+          // Tek tüketici kuralı: sayfa kendi jetonunu döndürdüyse MUTLAKA yakala,
+          // yoksa bir sonraki görev bayat jetonla yenilemeye çalışıp aileyi iptal ettirir.
+          if (lease.context) await tarayiciCerezleriniYakala(lease.context, { neden: 'görev' }).catch(() => {});
           await lease.release({ ok });
         }
       },

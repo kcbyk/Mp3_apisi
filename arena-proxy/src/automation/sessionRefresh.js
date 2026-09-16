@@ -156,6 +156,15 @@ export function yenilemeGerekliMi(esikDk = config.session.refreshThresholdMinute
 export async function oturumuKaliciYaz(state, { neden = 'refresh' } = {}) {
   const sonuc = { dosya: false, render: false, github: false, hatalar: [] };
 
+  // 0) CANLI BELLEK: dosya/env bir sonraki açılışta okunur; süreç yeniden başlamadan
+  //    yeni çerezle çalışabilmesi için bellekteki oturumu hemen değiştir.
+  try {
+    sessionStore.guncelle(state, { etiket: `runtime:${neden}` });
+    sonuc.bellek = true;
+  } catch (e) {
+    sonuc.hatalar.push(`bellek: ${String(e.message).slice(0, 60)}`);
+  }
+
   // 1) yerel dosya (atomik yazım, 600)
   try {
     const hedef = config.session.statePath;
@@ -362,7 +371,14 @@ export async function tarayiciIleYenile({ taskId = 'session-refresh' } = {}) {
     };
 
     let gelenler = await cerezleriTopla();
-    const bitis = Date.now() + config.session.browserRefreshWaitMs;
+    // Bekleme süresi jetonun bitişine göre: uygulama, süresi dolunca yeniler.
+    // (Sabit kısa bekleme, jeton henüz tazeyken boşa beklemeye yol açıyordu.)
+    const durum = oturumDurumu();
+    const kalanDk = Number.isFinite(durum?.kalanDk) ? durum.kalanDk : null;
+    const dinamikMs = kalanDk === null ? config.session.browserRefreshWaitMs : Math.round((Math.max(kalanDk, 0) + 5) * 60_000);
+    const bekleMs = Math.min(Math.max(dinamikMs, 120_000), config.session.browserRefreshWaitMs);
+    log.info({ kalanDk, bekleDk: Math.round(bekleMs / 60_000) }, 'tarayıcı yolu: jeton değişimi bekleniyor');
+    const bitis = Date.now() + bekleMs;
     let tur = 0;
     while (Date.now() < bitis && (!gelenler[config.session.cookieName] || gelenler[config.session.cookieName] === zorlanmisDeger)) {
       tur += 1;
@@ -384,7 +400,7 @@ export async function tarayiciIleYenile({ taskId = 'session-refresh' } = {}) {
     if (gelenler[config.session.cookieName] === zorlanmisDeger || gelenler[config.session.cookieName] === cer.value) {
       return {
         ok: false,
-        sebep: `tarayıcı yeni jeton yazmadı (${Math.round(config.session.browserRefreshWaitMs / 1000)} sn beklendi)`,
+        sebep: `tarayıcı yeni jeton yazmadı (${Math.round(bekleMs / 1000)} sn beklendi)`,
       };
     }
 
@@ -413,10 +429,16 @@ export async function oturumuYenile({ zorla = false, esikDk, taskId } = {}) {
   surenIslem = (async () => {
     const t0 = Date.now();
     let sonuc;
-    try {
-      sonuc = await httpIleYenile();
-    } catch (e) {
-      sonuc = { ok: false, sebep: `http hata: ${String(e.message).slice(0, 90)}` };
+    if (!config.session.httpRefreshEnabled) {
+      // Tek tüketici kuralı: HTTP yolu sunucuda YENİ jeton üretir; açık bir sayfa
+      // eski jetonu kullanırsa "reuse" iptali olur. Bu yüzden devre dışı bırakılabilir.
+      sonuc = { ok: false, sebep: 'HTTP yenileme kapalı (SESSION_HTTP_REFRESH=false)' };
+    } else {
+      try {
+        sonuc = await httpIleYenile();
+      } catch (e) {
+        sonuc = { ok: false, sebep: `http hata: ${String(e.message).slice(0, 90)}` };
+      }
     }
     if (!sonuc.ok) {
       log.warn({ sebep: sonuc.sebep }, 'HTTP yenileme olmadı → tarayıcı yolu denenecek');
@@ -499,4 +521,53 @@ export function oturumBekcisiniBaslat() {
 export function oturumBekcisiniDurdur() {
   if (zamanlayici) clearTimeout(zamanlayici);
   zamanlayici = null;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Tarayıcıdan taze çerez yakalama                                           */
+/* -------------------------------------------------------------------------- */
+/**
+ * Bir tarayıcı context'i kapandıktan sonra içindeki çerezleri okuyup, mevcut
+ * oturumdan FARKLIYSA kalıcı hale getirir.
+ *
+ * NEDEN: arena.ai'nin kendi istemcisi access_token dolduğunda refresh_token'ı
+ * döndürür ve YALNIZCA kendi context'inde saklar. Bu yeni jetonu yakalayıp
+ * kaydetmezsek, bir sonraki context bayat jetonla yenilemeye çalışır ve
+ * Supabase "refresh token reuse" tespitiyle TÜM aileyi iptal eder (canlıda
+ * yaşandı: 06:29 hesap düştü). Tek tüketici kuralı: her kullanımdan sonra yakala.
+ */
+export async function tarayiciCerezleriniYakala(context, { neden = 'görev' } = {}) {
+  if (!context) return { degisti: false, sebep: 'context yok' };
+  try {
+    const cerezler = await context.cookies(config.target.baseUrl);
+    if (!cerezler.length) return { degisti: false, sebep: 'çerez yok' };
+    const mevcut = sessionStore.get(false);
+    const yeniDurum = {
+      ...mevcut,
+      cookies: cerezler.map((c) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path,
+        expires: c.expires,
+        httpOnly: c.httpOnly,
+        secure: c.secure,
+        sameSite: c.sameSite,
+      })),
+    };
+    const eski = birlesikCerezDegeri(mevcut);
+    const yeni = birlesikCerezDegeri(yeniDurum);
+    if (yeni && yeni === eski) return { degisti: false };
+    const bilgi = oturumCoz({ value: yeni });
+    if (!bilgi.ok) {
+      log.warn({ sebep: bilgi.sebep, neden }, 'tarayıcıdan gelen çerez çözülemedi — yazılmadı');
+      return { degisti: false, sebep: bilgi.sebep };
+    }
+    await oturumuKaliciYaz(yeniDurum, { neden });
+    log.info({ neden, kalanDk: bilgi.kalanDk, refreshVar: bilgi.refreshVar }, 'tarayıcıdan taze oturum yakalandı ve kaydedildi');
+    return { degisti: true, kalanDk: bilgi.kalanDk, refreshVar: bilgi.refreshVar };
+  } catch (e) {
+    log.warn({ err: String(e.message).slice(0, 120), neden }, 'çerez yakalama başarısız');
+    return { degisti: false, sebep: String(e.message).slice(0, 120) };
+  }
 }

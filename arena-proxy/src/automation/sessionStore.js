@@ -148,6 +148,10 @@ class SessionStore {
     this.version = 0;
     this.signature = null;
     this.timer = null;
+    // Bellekteki (canlı) sürüm: yenileme/yakalama sonrası env/dosyayı beklemeden
+    // yeni çerezle çalışılsın diye tutulur. Aynı kaynak imzasına bağlanır.
+    this.runtime = null;
+    this.runtimeSignature = null;
   }
 
   /** Oturum kaynağı var mı? (env > dosya) */
@@ -210,6 +214,8 @@ class SessionStore {
    */
   get(force = false) {
     const kaynak = this._kaynak();
+    // Bellekte daha taze bir sürüm varsa ve dış kaynak değişmediyse onu kullan
+    if (!force && this.runtime && this.runtimeSignature === kaynak.signature) return this.runtime;
     if (!force && this.cached && kaynak.signature === this.signature) return this.cached;
 
     const state = normalizeStorageState(kaynak.raws, kaynak.etiket);
@@ -220,6 +226,20 @@ class SessionStore {
       { version: this.version, cookies: state.cookies.length, kaynak: kaynak.etiket },
       'session cache yenilendi',
     );
+    return state;
+  }
+
+  /**
+   * Canlı süreçte oturumu anında değiştirir (yenileme veya tarayıcıdan yakalama).
+   * Kaynak imzası sabitlenir: env/dosya dışarıdan güncellenirse normal okuma devreye girer.
+   */
+  guncelle(state, { etiket = 'runtime' } = {}) {
+    this.runtime = state;
+    this.runtimeSignature = this._kaynak().signature;
+    this.cached = state;
+    this.signature = this.runtimeSignature;
+    this.version += 1;
+    log.info({ version: this.version, cookies: state.cookies.length, kaynak: etiket }, 'session cache güncellendi (bellek)');
     return state;
   }
 
@@ -262,10 +282,11 @@ class SessionStore {
   describe() {
     try {
       const state = this.get(false);
+      const bellekMi = Boolean(this.runtime) && this.runtime === state;
       return {
         ok: true,
-        path: config.session.stateB64 ? 'env:SESSION_STATE_B64'
-          : config.session.stateJson ? 'env:SESSION_STATE_JSON' : this.statePath,
+        path: bellekMi ? 'bellek:canlı' : (config.session.stateB64 ? 'env:SESSION_STATE_B64'
+          : config.session.stateJson ? 'env:SESSION_STATE_JSON' : this.statePath),
         version: this.version,
         cookie_count: state.cookies.length,
         origin_count: state.origins.length,
