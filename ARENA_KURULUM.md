@@ -136,6 +136,24 @@ npm run session:env -- --out session.env
 Oturum düşerse: `POST /api/v1/session/import` (arena-proxy) veya yeni base64 üretip env'i
 güncelle → Render → Manual Deploy.
 
+#### Tek komutla çerez yenileme (önerilen)
+
+Çerezi aldıktan sonra (Cookie-Editor → **Export as JSON** → dosyaya kaydet):
+
+```bash
+cd arena-proxy
+# yerel oturumu yazar + Render env'i günceller + yeniden dağıtır + oturumu doğrular:
+RENDER_API_KEY=rnd_xxx RENDER_SERVICE_ID=srv-xxx RENDER_PROXY_API_KEY=sk-arena-xxx \
+  node scripts/cerez-guncelle.mjs --dosya ~/arena-cerez.json
+```
+
+Desteklenen girdiler: Cookie-Editor JSON dizisi (önerilen), Playwright storageState,
+tek cookie nesnesi, `document.cookie` metni (⚠️ httpOnly çerez görünmez),
+Netscape `cookies.txt`. Betik çerez değerlerini **ekrana yazmaz**; yerel dosyayı `600`
+izniyle yazar ve `arena-auth-prod-v1.0` çerezinin varlığını/uzunluğunu kontrol edip uyarır.
+
+Sadece yerel dosyayı güncellemek için: `--kuru`. Base64'ü ekrana yazmak için: `--env`.
+
 #### Oturumu saniyeler içinde doğrula (canlı test)
 
 ```bash

@@ -21,7 +21,8 @@
     "smoke": "node scripts/smoke.js",
     "session:env": "node scripts/sessionToEnv.js",
     "docker:build": "docker build -t arena-proxy .",
-    "docker:run": "docker run --rm -p 8080:8080 --env-file .env -v $(pwd)/data/sessions:/app/data/sessions arena-proxy"
+    "docker:run": "docker run --rm -p 8080:8080 --env-file .env -v $(pwd)/data/sessions:/app/data/sessions arena-proxy",
+    "session:guncelle": "node scripts/cerez-guncelle.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
