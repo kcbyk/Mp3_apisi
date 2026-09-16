@@ -1,0 +1,43 @@
+{
+  "name": "arena-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless browser automation proxy: target platform asset generators exposed as a standard REST API",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test tests/",
+    "lint:check": "node -e \"import('./server.js')\" --help >/dev/null 2>&1 || true",
+    "session:save": "node scripts/saveSession.js",
+    "session:inspect": "node scripts/inspectDom.js",
+    "fake:target": "node scripts/fakeTarget.js",
+    "browsers:install": "playwright install chromium",
+    "browsers:install:deps": "playwright install --with-deps chromium",
+    "smoke": "node scripts/smoke.js",
+    "session:env": "node scripts/sessionToEnv.js",
+    "docker:build": "docker build -t arena-proxy .",
+    "docker:run": "docker run --rm -p 8080:8080 --env-file .env -v $(pwd)/data/sessions:/app/data/sessions arena-proxy"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "p-queue": "^8.0.1",
+    "p-retry": "^6.2.0",
+    "pino": "^9.4.0",
+    "pino-http": "^10.3.0",
+    "playwright": "1.63.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "pino-pretty": "^11.2.2"
+  }
+}

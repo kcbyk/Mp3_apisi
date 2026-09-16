@@ -1,0 +1,414 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "arena-proxy",
+    "version": "1.0.0",
+    "description": "Hedef web platformlarındaki (Arena AI vb.) görsel üretim araçlarını standart bir REST API olarak sunan headless Playwright otomasyon servisi.\n\n- Senkron ve asenkron (job + webhook) mod\n- Önceden kaydedilmiş oturum (cookie/localStorage) ile çalışır\n- Üretilen görselin CDN/S3 URL'i ağ trafiği dinlenerek yakalanır\n- Teslim biçimi: `url` | `base64` | `file` | `both`\n",
+    "license": { "name": "Kullanım hedef platformun şartlarına tabidir" }
+  },
+  "servers": [
+    { "url": "http://localhost:8080", "description": "Yerel geliştirme" }
+  ],
+  "security": [{ "ApiKeyAuth": [] }, { "BearerAuth": [] }],
+  "tags": [
+    { "name": "generation", "description": "Üretim uçları" },
+    { "name": "jobs", "description": "Asenkron iş takibi" },
+    { "name": "session", "description": "Oturum (cookie) yönetimi" },
+    { "name": "system", "description": "Sağlık, metrik, bootstrap" }
+  ],
+  "paths": {
+    "/api/v1/generate-asset": {
+      "post": {
+        "tags": ["generation"],
+        "summary": "Görsel üret ve sonucu dön",
+        "operationId": "generateAsset",
+        "description": "Playwright ile hedef platforma oturum açar, prompt ve parametreleri forma yazar, üretimi tetikler, ağ/DOM trafiğinden asset URL'ini yakalar ve seçilen teslim biçiminde döner.\n\n`async=true` gönderilirse iş kuyruğa alınır ve `202` ile `job_id` döner.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/GenerateAssetRequest" },
+              "examples": {
+                "senkron": {
+                  "summary": "Senkron üretim, CDN linki",
+                  "value": {
+                    "prompt": "altın saatte Kapadokya, sinematik geniş açı",
+                    "negative_prompt": "blurry, text, watermark",
+                    "aspect_ratio": "16:9",
+                    "style": "photographic"
+                  }
+                },
+                "asenkron": {
+                  "summary": "Asenkron + webhook",
+                  "value": {
+                    "prompt": "izometrik şehir illüstrasyonu",
+                    "aspect_ratio": "1:1",
+                    "async": true,
+                    "callback_url": "https://example.com/hooks/image-ready",
+                    "delivery": "file"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Üretim tamamlandı",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/GenerateAssetResponse" } }
+            }
+          },
+          "202": {
+            "description": "İş kuyruğa alındı",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/JobAccepted" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "502": { "$ref": "#/components/responses/UpstreamError" },
+          "503": { "$ref": "#/components/responses/SessionInvalid" },
+          "504": { "$ref": "#/components/responses/Timeout" }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}": {
+      "get": {
+        "tags": ["jobs"],
+        "summary": "Asenkron iş durumu",
+        "operationId": "getJob",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "İş durumu (queued | succeeded | failed)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JobStatus" } } }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["jobs"],
+        "summary": "İşi sil",
+        "operationId": "deleteJob",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": { "200": { "description": "Silindi" } }
+      }
+    },
+    "/api/v1/debug/selectors": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Selector sağlık raporu",
+        "operationId": "selectorStats",
+        "description": "Hangi resilient-selector stratejisinin kaç kez tuttuğunu döner (self-healing sinyali).",
+        "responses": { "200": { "description": "İstatistik listesi" } }
+      }
+    },
+    "/api/v1/debug/session-preview": {
+      "get": {
+        "tags": ["session"],
+        "summary": "Session şeması (cookie değerleri maskeli)",
+        "operationId": "sessionPreview",
+        "responses": { "200": { "description": "Cookie adları, süreleri, maskeli önizleme" } }
+      }
+    },
+    "/api/v1/session/import": {
+      "post": {
+        "tags": ["session"],
+        "summary": "Çalışırken yeni oturum yükle",
+        "operationId": "importSession",
+        "description": "storageState | cookie dizisi | Netscape metni kabul eder. `session_version` artar ve havuzdaki context'ler geri dönüştürülür.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/StorageState" } },
+            "text/plain": { "schema": { "type": "string", "description": "Netscape cookies.txt içeriği" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "İçe aktarıldı",
+            "content": {
+              "application/json": {
+                "example": { "success": true, "imported_cookies": 12, "imported_origins": 1, "session_version": 4 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/browser/reset": {
+      "post": {
+        "tags": ["system"],
+        "summary": "Chromium ve context havuzunu sıfırla",
+        "operationId": "resetBrowser",
+        "responses": { "200": { "description": "Önceki/sonraki sağlık durumu" } }
+      }
+    },
+    "/api/v1/selectors/file": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Aktif selector kayıt defteri",
+        "operationId": "getSelectorFile",
+        "responses": { "200": { "description": "arena.json içeriği" } }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Sağlık durumu (auth yok)",
+        "operationId": "health",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Servis, tarayıcı, kuyruk ve oturum durumu",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" } } }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Hazırlık kontrolü (auth yok)",
+        "operationId": "ready",
+        "security": [],
+        "responses": {
+          "200": { "description": "Hazır" },
+          "503": {
+            "description": "Eksik yapılandırma",
+            "content": {
+              "application/json": {
+                "example": { "ready": false, "problems": ["session_file_missing"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Metrikler (auth yok)",
+        "operationId": "metrics",
+        "security": [],
+        "responses": { "200": { "description": "Sayaçlar, latency yüzdelikleri, kuyruk/tarayıcı durumu" } }
+      }
+    },
+    "/version": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Sürüm bilgisi",
+        "operationId": "version",
+        "security": [],
+        "responses": { "200": { "description": "Paket ve Node sürümü" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "x-api-key" },
+      "BearerAuth": { "type": "http", "scheme": "bearer" }
+    },
+    "schemas": {
+      "GenerateAssetRequest": {
+        "type": "object",
+        "required": ["prompt"],
+        "additionalProperties": false,
+        "properties": {
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 4000, "description": "Üretim istemi" },
+          "negative_prompt": { "type": "string", "maxLength": 2000, "default": "" },
+          "aspect_ratio": {
+            "type": "string",
+            "default": "1:1",
+            "pattern": "^\\d{1,2}[:x]\\d{1,2}$|^\\d+(\\.\\d+)?$",
+            "examples": ["1:1", "16:9", "9:16", "4:3", "21:9", "1.0"],
+            "description": "En-boy oranı. Alias'lar: square/kare, landscape/yatay, portrait/dikey, cinematic."
+          },
+          "style": { "type": "string", "maxLength": 120, "examples": ["photographic", "cinematic", "anime"] },
+          "count": { "type": "integer", "minimum": 1, "maximum": 4, "default": 1 },
+          "async": { "type": "boolean", "default": false },
+          "callback_url": { "type": "string", "format": "uri" },
+          "delivery": { "type": "string", "enum": ["url", "base64", "file", "both"] }
+        }
+      },
+      "GenerateAssetResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "image_url": { "type": ["string", "null"], "description": "delivery=url|both ise CDN/S3 linki" },
+          "image_base64": { "type": ["string", "null"], "description": "delivery=base64|both ise gömülü görsel" },
+          "image_file": {
+            "type": ["object", "null"],
+            "properties": {
+              "url": { "type": "string" },
+              "path": { "type": "string" },
+              "filename": { "type": "string" }
+            }
+          },
+          "mime_type": { "type": ["string", "null"] },
+          "bytes": { "type": ["integer", "null"] },
+          "sha256": { "type": ["string", "null"], "description": "İndirilen içeriğin sağlaması (dedupe için)" },
+          "delivery": { "type": "string", "enum": ["url", "base64", "file", "both"] },
+          "captured_from": {
+            "type": "string",
+            "examples": ["network:image", "network:json(https://arena.ai/api/generate)", "websocket(wss://…)","dom:img", "dry-run:fixture"]
+          },
+          "execution_time_ms": { "type": "integer", "description": "İstek başından yanıta kadar geçen süre" },
+          "meta": { "$ref": "#/components/schemas/GenerationMeta" },
+          "request_id": { "type": "string" }
+        }
+      },
+      "GenerationMeta": {
+        "type": "object",
+        "properties": {
+          "task_id": { "type": "string" },
+          "elapsed_ms": { "type": "integer" },
+          "steps": {
+            "type": "object",
+            "additionalProperties": { "type": "integer" },
+            "example": { "navigate": 812, "consent": 120, "aspect_ratio": 60, "prompts": 940, "click_generate": 70, "capture_artifact": 1900 }
+          },
+          "page_url": { "type": "string" },
+          "normalized_params": { "type": "object" },
+          "candidates": {
+            "type": "array",
+            "description": "Yakalanan aday URL'ler (skorla sıralı) — selector/akış hata ayıklaması için",
+            "items": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string" },
+                "score": { "type": "integer" },
+                "source": { "type": "string" }
+              }
+            }
+          },
+          "ws_frames": { "type": "integer" },
+          "json_hits": { "type": "integer" },
+          "reused_context": { "type": "boolean", "description": "Havuzdan yeniden kullanılan context" },
+          "context_id": { "type": ["string", "null"] },
+          "screenshot": { "type": ["string", "null"], "description": "Hata halinde alınan ekran görüntüsü yolu" }
+        }
+      },
+      "JobAccepted": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "job_id": { "type": "string", "format": "uuid" },
+          "status": { "type": "string", "enum": ["queued"] },
+          "poll_url": { "type": "string" },
+          "queue_position": { "type": "integer" }
+        }
+      },
+      "JobStatus": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "job_id": { "type": "string" },
+          "status": { "type": "string", "enum": ["queued", "succeeded", "failed"] },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "result": { "$ref": "#/components/schemas/GenerateAssetResponse" },
+          "error": { "$ref": "#/components/schemas/ErrorObject" }
+        }
+      },
+      "StorageState": {
+        "type": "object",
+        "properties": {
+          "cookies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "value", "domain"],
+              "properties": {
+                "name": { "type": "string" },
+                "value": { "type": "string" },
+                "domain": { "type": "string" },
+                "path": { "type": "string", "default": "/" },
+                "expires": { "type": "number", "description": "-1 = session cookie (ms veya sn otomatik algılanır)" },
+                "httpOnly": { "type": "boolean" },
+                "secure": { "type": "boolean" },
+                "sameSite": { "type": "string", "enum": ["Strict", "Lax", "None"] }
+              }
+            }
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "origin": { "type": "string" },
+                "localStorage": {
+                  "type": "array",
+                  "items": { "type": "object", "properties": { "name": { "type": "string" }, "value": { "type": "string" } } }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["ok"] },
+          "uptime_s": { "type": "integer" },
+          "env": { "type": "string" },
+          "dry_run": { "type": "boolean" },
+          "session": { "type": "object" },
+          "browser": { "type": "object" },
+          "queue": { "type": "object" }
+        }
+      },
+      "ErrorObject": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "string", "examples": ["VALIDATION_ERROR", "SESSION_INVALID", "QUEUE_FULL", "ARTIFACT_NOT_FOUND", "STEP_TIMEOUT"] },
+          "message": { "type": "string" },
+          "details": { "type": "object" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "enum": [false] },
+          "error": { "$ref": "#/components/schemas/ErrorObject" },
+          "request_id": { "type": "string" }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "VALIDATION_ERROR — parametre hatası (retry edilmez)",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+            "example": {
+              "success": false,
+              "error": { "code": "VALIDATION_ERROR", "message": "İstek gövdesi geçersiz.", "details": { "issues": [{ "path": "prompt", "message": "prompt zorunludur" }] } },
+              "request_id": "…"
+            }
+          }
+        }
+      },
+      "Unauthorized": { "description": "UNAUTHORIZED/FORBIDDEN — API anahtarı eksik/geçersiz" },
+      "NotFound": { "description": "NOT_FOUND / JOB_NOT_FOUND" },
+      "TooManyRequests": {
+        "description": "QUEUE_FULL veya RATE_LIMITED — istemci backoff yapmalı",
+        "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Saniye" } }
+      },
+      "UpstreamError": { "description": "NAVIGATION_ERROR / ARTIFACT_NOT_FOUND — hedef platform tarafı sorun (retry edilebilir)" },
+      "SessionInvalid": { "description": "SESSION_INVALID — oturum dosyası yok/expire (SESSION_GUIDE.md)" },
+      "Timeout": { "description": "STEP_TIMEOUT / JOB_TIMEOUT — zaman aşımı (retry edilebilir)" }
+    }
+  },
+  "x-docs": {
+    "session_guide": "SESSION_GUIDE.md",
+    "dry_run": "DRY_RUN=true iken tarayıcı açılmaz, fixture görsel döner (CI için)",
+    "rate_limits": "express-rate-limit: RATE_LIMIT_MAX/60sn (API anahtarı veya IP başına). Kuyruk: MAX_QUEUE_SIZE, QUEUE_RATE_PER_MIN."
+  }
+}

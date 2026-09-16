@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arena-proxy · API Konsolu</title>
+<style>
+  :root{
+    --bg:#0b1020; --bg2:#111a33; --card:#131c33; --border:#233256; --text:#e6ecf7;
+    --muted:#93a4c4; --accent:#5eead4; --accent2:#818cf8; --ok:#34d399; --err:#f87171;
+    --warn:#fbbf24; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 15% -10%,#1a2749 0%,var(--bg) 55%);
+       color:var(--text);font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  a{color:var(--accent)}
+  header{padding:28px 22px 10px;max-width:1180px;margin:0 auto}
+  h1{margin:0 0 6px;font-size:26px;letter-spacing:.2px}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--muted);font-size:14px}
+  .badges{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+  .badge{font:12px/1 var(--mono);padding:6px 9px;border:1px solid var(--border);border-radius:999px;background:#0e1730;color:var(--muted)}
+  .badge b{color:var(--text);font-weight:600}
+  main{max-width:1180px;margin:0 auto;padding:10px 22px 60px;display:grid;grid-template-columns:1.25fr .85fr;gap:18px}
+  @media (max-width:940px){main{grid-template-columns:1fr}}
+  .card{background:linear-gradient(180deg,var(--card),#0f1730);border:1px solid var(--border);
+        border-radius:14px;padding:18px;box-shadow:0 12px 30px rgba(0,0,0,.25)}
+  .card h2{margin:0 0 12px;font-size:16px;display:flex;align-items:center;gap:8px}
+  .card h2 code{font-size:13px;background:#0c1428;border:1px solid var(--border);padding:3px 7px;border-radius:7px;color:var(--accent)}
+  label{display:block;font-size:12px;color:var(--muted);margin:12px 0 5px;text-transform:uppercase;letter-spacing:.08em}
+  input,textarea,select,button{font:14px/1.45 inherit;width:100%;padding:10px 12px;border-radius:10px;
+        border:1px solid var(--border);background:#0c1428;color:var(--text);outline:none}
+  textarea{min-height:96px;resize:vertical;font-family:var(--mono);font-size:13px}
+  input:focus,textarea:focus,select:focus{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(129,140,248,.15)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  button{margin-top:14px;cursor:pointer;border:0;background:linear-gradient(90deg,var(--accent2),var(--accent));
+         color:#07122a;font-weight:700;letter-spacing:.02em}
+  button:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.55;cursor:progress}
+  button.ghost{background:#0c1428;border:1px solid var(--border);color:var(--text);font-weight:600}
+  .btnrow{display:flex;gap:10px}
+  pre{margin:0;background:#070d1c;border:1px solid var(--border);border-radius:12px;padding:14px;
+      overflow:auto;max-height:430px;font-family:var(--mono);font-size:12.5px;color:#cfe2ff;white-space:pre-wrap;word-break:break-word}
+  .status{font:12px/1 var(--mono);padding:6px 9px;border-radius:8px;display:inline-block;margin-bottom:10px}
+  .s-ok{background:rgba(52,211,153,.13);color:var(--ok);border:1px solid rgba(52,211,153,.35)}
+  .s-err{background:rgba(248,113,113,.13);color:var(--err);border:1px solid rgba(248,113,113,.35)}
+  .s-idle{background:#0c1428;color:var(--muted);border:1px solid var(--border)}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+  .kv b{color:var(--text);font-weight:600}
+  #preview img{max-width:100%;border-radius:12px;border:1px solid var(--border);margin-top:12px;display:none}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+  code.i{font-family:var(--mono);background:#0c1428;border:1px solid var(--border);padding:2px 6px;border-radius:6px;font-size:12.5px}
+  .tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+  .tab{padding:6px 11px;border-radius:999px;border:1px solid var(--border);background:#0c1428;color:var(--muted);
+       font:12px/1 var(--mono);cursor:pointer}
+  .tab.on{color:#07122a;background:var(--accent);border-color:var(--accent);font-weight:700}
+  .foot{color:var(--muted);font-size:12.5px;padding:0 22px 40px;max-width:1180px;margin:0 auto}
+  .hint{color:var(--muted);font-size:12.5px;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>arena-proxy <span>· API Konsolu</span></h1>
+  <div class="sub">Headless Playwright ile hedef platformun görsel üretim aracını REST API'ye çeviren proxy servisi.</div>
+  <div class="badges">
+    <span class="badge">POST <b>/api/v1/generate-asset</b></span>
+    <span class="badge">GET <b>/health</b></span>
+    <span class="badge">GET <b>/metrics</b></span>
+    <span class="badge" id="b-dry">dry_run: ?</span>
+    <span class="badge" id="b-session">session: ?</span>
+    <span class="badge" id="b-browser">browser: ?</span>
+  </div>
+</header>
+
+<main>
+  <!-- SOL: playground -->
+  <section class="card">
+    <h2>Üretim İsteği <code>POST /api/v1/generate-asset</code></h2>
+
+    <label for="key">API Anahtarı (x-api-key)</label>
+    <input id="key" type="password" placeholder="dev-key-change-me" autocomplete="off">
+
+    <label for="prompt">Prompt</label>
+    <textarea id="prompt">altın saatte Kapadokya, sinematik geniş açı, sıcak ışık</textarea>
+
+    <div class="row">
+      <div>
+        <label for="neg">Negative prompt</label>
+        <input id="neg" value="blurry, text, watermark">
+      </div>
+      <div>
+        <label for="style">Style</label>
+        <input id="style" value="photographic" list="styles">
+        <datalist id="styles"><option value="photographic"><option value="cinematic"><option value="anime"><option value="digital-art"></datalist>
+      </div>
+    </div>
+
+    <div class="row3">
+      <div>
+        <label for="ratio">Aspect ratio</label>
+        <select id="ratio">
+          <option>1:1</option><option selected>16:9</option><option>9:16</option>
+          <option>4:3</option><option>3:4</option><option>21:9</option>
+        </select>
+      </div>
+      <div>
+        <label for="delivery">Teslim biçimi</label>
+        <select id="delivery">
+          <option value="">(varsayılan)</option>
+          <option value="url">url</option><option value="base64">base64</option>
+          <option value="file">file</option><option value="both">both</option>
+        </select>
+      </div>
+      <div>
+        <label for="mode">Mod</label>
+        <select id="mode">
+          <option value="sync">senkron</option>
+          <option value="async">asenkron (job)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="btnrow">
+      <button id="go">▶ Üret</button>
+      <button id="health" class="ghost">Sağlık / Metrik</button>
+    </div>
+
+    <div class="hint">Not: <code class="i">DRY_RUN=true</code> iken servis tarayıcı açmaz, fixture görsel döner.
+      Gerçek üretim için <code class="i">SESSION_GUIDE.md</code> ile oturum kaydedin.</div>
+
+    <div id="preview"><img id="im" alt="üretilen görsel"></div>
+  </section>
+
+  <!-- SAĞ: yanıt -->
+  <section class="card">
+    <h2>Yanıt</h2>
+    <span id="st" class="status s-idle">hazır</span>
+    <div class="tabs">
+      <div class="tab on" data-t="body">JSON</div>
+      <div class="tab" data-t="meta">meta</div>
+      <div class="tab" data-t="health">health</div>
+      <div class="tab" data-t="metrics">metrics</div>
+    </div>
+    <pre id="out">Bir istek gönderin…</pre>
+    <div id="kv" class="kv" style="margin-top:12px"></div>
+  </section>
+
+  <!-- Alt: endpoint tablosu -->
+  <section class="card" style="grid-column:1/-1">
+    <h2>Uç Noktalar</h2>
+    <table>
+      <thead><tr><th>Metot</th><th>Yol</th><th>Açıklama</th><th>Auth</th></tr></thead>
+      <tbody>
+        <tr><td><code class="i">POST</code></td><td><code class="i">/api/v1/generate-asset</code></td><td>Üretim (senkron veya <code class="i">async:true</code>)</td><td>✅</td></tr>
+        <tr><td><code class="i">GET</code> <code class="i">DELETE</code></td><td><code class="i">/api/v1/jobs/:id</code></td><td>Asenkron iş durumu / iptal</td><td>✅</td></tr>
+        <tr><td><code class="i">GET</code></td><td><code class="i">/api/v1/debug/selectors</code></td><td>Hangi selector stratejisi tuttu (self-healing)</td><td>✅</td></tr>
+        <tr><td><code class="i">GET</code></td><td><code class="i">/api/v1/debug/session-preview</code></td><td>Cookie adları/süreleri (değerler maskeli)</td><td>✅</td></tr>
+        <tr><td><code class="i">POST</code></td><td><code class="i">/api/v1/session/import</code></td><td>Çalışırken yeni oturum yükle (context'ler yenilenir)</td><td>✅</td></tr>
+        <tr><td><code class="i">POST</code></td><td><code class="i">/api/v1/browser/reset</code></td><td>Chromium + context havuzunu sıfırla</td><td>✅</td></tr>
+        <tr><td><code class="i">GET</code></td><td><code class="i">/api/v1/selectors/file</code></td><td>Aktif selector kayıt defteri</td><td>✅</td></tr>
+        <tr><td><code class="i">GET</code></td><td><code class="i">/health</code> <code class="i">/ready</code> <code class="i">/metrics</code> <code class="i">/version</code></td><td>Durum, hazırlık, metrik, sürüm</td><td>–</td></tr>
+        <tr><td><code class="i">GET</code></td><td><code class="i">/openapi.json</code> · <code class="i">/docs</code></td><td>OpenAPI 3.1 şeması · bu konsol</td><td>–</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+
+<div class="foot">
+  Hata kodları: <code class="i">VALIDATION_ERROR</code> (400) · <code class="i">QUEUE_FULL</code>/<code class="i">RATE_LIMITED</code> (429) ·
+  <code class="i">SESSION_INVALID</code> (503) · <code class="i">ARTIFACT_NOT_FOUND</code> (502) · <code class="i">STEP_TIMEOUT</code> (504).
+  Detaylı kullanım: README.md · Oturum: SESSION_GUIDE.md
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const API = '/api/v1';
+  const out = $('out'), st = $('st'), kv = $('kv'), im = $('im'), preview = $('preview');
+  let last = null;
+
+  const saved = localStorage.getItem('arena_api_key');
+  if (saved) $('key').value = saved;
+
+  function status(msg, cls) { st.textContent = msg; st.className = 'status ' + cls; }
+  function show(obj) { out.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2); }
+
+  function renderMeta(data) {
+    kv.innerHTML = '';
+    const m = data?.meta ?? {};
+    const rows = [
+      ['request_id', data?.request_id], ['captured_from', data?.captured_from],
+      ['execution_time_ms', data?.execution_time_ms], ['delivery', data?.delivery],
+      ['bytes', data?.bytes], ['sha256', data?.sha256?.slice(0, 24) + (data?.sha256 ? '…' : '')],
+      ['aspect_ratio', m.normalized_params?.aspectRatio], ['style', m.normalized_params?.style || '—'],
+      ['reused_context', String(m.reused_context)], ['context_id', m.context_id],
+      ['ws_frames / json_hits', (m.ws_frames ?? '—') + ' / ' + (m.json_hits ?? '—')],
+      ['steps', m.steps ? Object.entries(m.steps).map(([k, v]) => k + '=' + v + 'ms').join('  ') : '—'],
+    ];
+    for (const [k, v] of rows) {
+      if (v === undefined || v === null) continue;
+      const a = document.createElement('span'); a.textContent = k + ':';
+      const b = document.createElement('b'); b.textContent = String(v);
+      kv.append(a, b);
+    }
+  }
+
+  function showImage(data) {
+    const src = data?.image_file?.url || data?.image_url ||
+                (data?.image_base64 ? ('data:' + (data.mime_type || 'image/png') + ';base64,' +
+                  (data.image_base64.length > 64 ? data.image_base64 : data.image_base64)) : null);
+    if (src && /\.(png|jpe?g|webp|gif|avif|svg)(\?|$)/i.test(src)) {
+      im.src = src; preview.style.display = 'block';
+    } else if (src && src.startsWith('data:image')) {
+      im.src = src; preview.style.display = 'block';
+    } else {
+      preview.style.display = 'none'; im.removeAttribute('src');
+    }
+  }
+
+  async function req(path, opts = {}) {
+    const key = $('key').value.trim();
+    const headers = Object.assign({ 'content-type': 'application/json' }, opts.headers || {});
+    if (key) { headers['x-api-key'] = key; localStorage.setItem('arena_api_key', key); }
+    const res = await fetch(path, Object.assign({}, opts, { headers }));
+    let body = null;
+    try { body = await res.json(); } catch { body = { raw: await res.text().catch(() => '') }; }
+    return { status: res.status, ok: res.ok, body };
+  }
+
+  $('go').onclick = async () => {
+    $('go').disabled = true; status('kuyrukta…', 's-idle'); preview.style.display = 'none';
+    try {
+      const payload = { prompt: $('prompt').value, negative_prompt: $('neg').value,
+                        aspect_ratio: $('ratio').value, style: $('style').value };
+      const dv = $('delivery').value; if (dv) payload.delivery = dv;
+
+      if ($('mode').value === 'async') {
+        payload.async = true;
+        const j = await req(API + '/generate-asset', { method: 'POST', body: JSON.stringify(payload) });
+        show(j.body); renderMeta(null);
+        status('HTTP ' + j.status + ' · iş kuyruğa alındı', 's-idle');
+        if (!j.body?.job_id) return;
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const p = await req(API + '/jobs/' + j.body.job_id);
+          status('job ' + (p.body?.status || '?') + ' · deneme ' + (i + 1), 's-idle');
+          if (p.body?.status === 'succeeded') { last = p.body.result; status('HTTP 200 · tamamlandı', 's-ok'); show(p.body.result); renderMeta(p.body.result); showImage(p.body.result); break; }
+          if (p.body?.status === 'failed') { status('iş başarısız: ' + (p.body.error?.code || ''), 's-err'); show(p.body); break; }
+        }
+      } else {
+        const r = await req(API + '/generate-asset', { method: 'POST', body: JSON.stringify(payload) });
+        last = r.body; show(r.body); renderMeta(r.body); showImage(r.body);
+        status('HTTP ' + r.status + (r.body?.success ? ' · başarılı' : ' · hata: ' + (r.body?.error?.code || '')), r.body?.success ? 's-ok' : 's-err');
+      }
+    } catch (e) {
+      status('ağ hatası', 's-err'); show(String(e));
+    } finally { $('go').disabled = false; }
+  };
+
+  $('health').onclick = async () => {
+    try {
+      const [h, m] = await Promise.all([req('/health'), req('/metrics')]);
+      show({ health: h.body, metrics: m.body });
+      status('HTTP ' + h.status + ' · servis durumu', h.ok ? 's-ok' : 's-err');
+      kv.innerHTML = '';
+      paintBadges(h.body);
+    } catch (e) { status('ağ hatası', 's-err'); show(String(e)); }
+  };
+
+  function paintBadges(h) {
+    if (!h) return;
+    $('b-dry').innerHTML = 'dry_run: <b>' + h.dry_run + '</b>';
+    $('b-session').innerHTML = 'session: <b>' + (h.session?.ok === false ? 'YOK' : (h.session?.cookie_count ?? 0) + ' cookie') + '</b>';
+    $('b-browser').innerHTML = 'browser: <b>' + (h.browser?.browserConnected ? 'bağlı' : 'kapalı') + '</b>';
+  }
+
+  document.querySelectorAll('.tab').forEach((t) => {
+    t.onclick = () => {
+      document.querySelectorAll('.tab').forEach((x) => x.classList.remove('on'));
+      t.classList.add('on');
+      const which = t.dataset.t;
+      if (which === 'body') show(last ?? 'Bir istek gönderin…');
+      if (which === 'meta' && last) show(last.meta ?? {});
+      if (which === 'health') req('/health').then((r) => { show(r.body); paintBadges(r.body); });
+      if (which === 'metrics') req('/metrics').then((r) => show(r.body));
+    };
+  });
+
+  req('/health').then((r) => { paintBadges(r.body); status('HTTP ' + r.status + ' · servis ayakta', r.ok ? 's-ok' : 's-err'); }).catch(() => status('servise ulaşılamıyor', 's-err'));
+})();
+</script>
+</body>
+</html>

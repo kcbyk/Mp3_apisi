@@ -696,7 +696,7 @@ input:focus{border-color:#7c5cff}
 .keyTarih{color:#5d6784;font-size:12px;margin-left:8px}
 .keyKey{font-family:monospace;font-size:13px;color:#00d4ff;margin:8px 0;word-break:break-all;cursor:pointer}
 .rozet{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:2px 8px;margin-right:4px;background:#1c2438;color:#a9b4cc}
-.rozet.yt{background:#3b1212;color:#f87171}.rozet.sc{background:#3b2a12;color:#fb923c}.rozet.ia{background:#122d3b;color:#38bdf8}.rozet.tt{background:#20242e;color:#25f4ee}.rozet.wb{background:#1a2e1a;color:#4ade80}.rozet.tm{background:#231b3b;color:#a78bfa}
+.rozet.yt{background:#3b1212;color:#f87171}.rozet.sc{background:#3b2a12;color:#fb923c}.rozet.ia{background:#122d3b;color:#38bdf8}.rozet.tt{background:#20242e;color:#25f4ee}.rozet.wb{background:#1a2e1a;color:#4ade80}.rozet.tm{background:#231b3b;color:#a78bfa}.rozet.ar{background:#0d2b26;color:#2dd4bf}
 .sil{float:right;background:none;border:none;color:#5d6784;font-size:16px;cursor:pointer}
 .sil:hover{color:#f87171}
 details{background:#131a2b;border:1px solid #26304d;border-radius:12px;padding:14px 18px;margin-bottom:16px}
@@ -738,6 +738,7 @@ footer a{color:#5d6784}
   <summary>📖 Hızlı kullanım (key'ini nasıl kullanırsın?)</summary>
   <pre id="ornek"></pre>
   <pre id="ornek2"></pre>
+  <pre id="ornek3"></pre>
 </details>
 
 <footer>🎵 Şarkı API v2.0 • <a href="/dokuman">detaylı dokümantasyon</a> • Render + GitHub backed</footer>
@@ -759,6 +760,7 @@ footer a{color:#5d6784}
       <div class="cip" data-s="archive" onclick="cip('archive')">📼 Archive.org</div>
       <div class="cip" data-s="tiktok" onclick="cip('tiktok')">🎵 TikTok</div>
       <div class="cip" data-s="web" onclick="cip('web')">🌐 Web</div>
+      <div class="cip" data-s="arena" onclick="cip('arena')">🤖 Arena (AI görsel)</div>
     </div>
     <div class="etiket" style="font-size:12px;opacity:.7">🌐 Web = genel arama + sayfa okuma uçları (/web, /oku — AI/bot işleri için)</div>
     <div class="etiket" id="parolaEtiket" style="display:none">Yönetici şifresi</div>
@@ -816,6 +818,7 @@ function ornekYaz(){
   const k=SONKEY||'SENİN_KEY';
   $('ornek').textContent='curl "'+location.origin+'/api/v1/instant?q=tarkan kuzu kuzu&key='+k+'"';
   $('ornek2').textContent='→ status → dosya_url ile mp3\\'yi al. Tüm uçlar: /dokuman';
+  $('ornek3').textContent='🤖 AI görsel (arena): '+location.origin+'/api/v1/arena/gorsel?prompt=okyanusta köpek balığı&mod=indir&key='+k;
 }
 function cip(s){
   if(s==='tumu')SECIM=new Set(['tumu']);
@@ -842,7 +845,7 @@ async function olustur(){
   ornekYaz();listeYukle();
 }
 function rozet(s){
-  const m={tumu:['tm','✨ Tümü'],youtube:['yt','▶️ YouTube'],soundcloud:['sc','☁️ SoundCloud'],archive:['ia','📼 Archive'],tiktok:['tt','🎵 TikTok'],web:['wb','🌐 Web']};
+  const m={tumu:['tm','✨ Tümü'],youtube:['yt','▶️ YouTube'],soundcloud:['sc','☁️ SoundCloud'],archive:['ia','📼 Archive'],tiktok:['tt','🎵 TikTok'],web:['wb','🌐 Web'],arena:['ar','🤖 Arena']};
   const[c,a]=m[s]||['','?'];return '<span class="rozet '+c+'">'+a+'</span>';
 }
 async function listeYukle(){
@@ -1024,8 +1027,37 @@ player.src = d.link;   // direkt CDN — hızlı akar</pre>
 <p class="acik"><b>Kaynaklar:</b> ▶️ YouTube 3-15 sn / 320 kbps · ☁️ SoundCloud 1-3 sn / 128 kbps · 📼 Archive.org 1-2 sn</p>
 </div>
 
+<div class="kart" style="border-color:#2dd4bf55">
+<span class="yol">🤖 Arena — AI Görsel Üretimi</span><span class="etiket get">GET</span><span class="etiket post">POST</span>
+<p class="acik"><b>arena-proxy</b> köprüsü (Playwright/Chromium). Prompt yaz, görsel üret. Bu uçlar
+<code>arena</code> sağlayıcısına izinli keylerde çalışır (ana sayfada 🤖 Arena çipini seç).</p>
+<pre>GET  /api/v1/arena/gorsel?prompt=okyanusta köpek balığı&mod=indir&key=sk-...
+POST /api/v1/arena/gorsel  {"prompt":"...","aspect_ratio":"16:9","style":"photographic"}
+GET  /api/v1/arena/durum?key=sk-...          → arena-proxy bağlantı/sağlık durumu
+GET  /api/v1/arena/sonuc/{is_id}?key=sk-...  → asenkron iş durumu</pre>
+<p class="acik"><b>mod:</b> <code>url</code> (302 → CDN linki, varsayılan) · <code>json</code> · <code>indir</code> (görseli bu sunucudan geçirir, &lt;img src&gt; için ideal) · <code>base64</code>.
+<b>Diğer:</b> <code>&amp;oran=16:9</code> · <code>&amp;stil=cinematic</code> · <code>&amp;negatif=blurry</code> · <code>&amp;bekleme=0</code> (asenkron) · <code>&amp;dosya=1</code> (indirme olarak sun).</p>
+<pre>→ {"ok":true,"gorsel_url":"https://cdn...","gorunum_url":".../api/v1/arena/gorsel?...&amp;mod=indir","boyut":3391221,"sure_ms":4820}</pre>
+</div>
+
 <footer>🎵 Şarkı API v2.0 — key yönetimi + kalıcı depolama • Kişisel kullanım</footer>
 </div></body></html>"""
+
+
+# ============================ ARENA ENTEGRASYONU (🤖 AI görsel) ============================
+# Eklemeli: mevcut uçlara dokunmaz. Modül yüklenemezse servis çalışmaya devam eder.
+def _arena_baslat():
+    try:
+        from arena_api import arena_rotalari_ekle
+        return arena_rotalari_ekle(app, korumali=korumali, depo=depo,
+                                   api_key=API_KEY, saglayicilar=SAGLAYICILAR, di_ad=DI_AD)
+    except Exception as _e:  # noqa: BLE001
+        print("[arena] entegrasyon yüklenemedi (servisin geri kalanı çalışmaya devam ediyor):", _e, flush=True)
+        return {"hata": str(_e)}
+
+arena_bilgi = _arena_baslat()
+if "uclar" in arena_bilgi:
+    print(f"[arena] entegrasyon aktif — uçlar: {', '.join(arena_bilgi['uclar'])}", flush=True)
 
 
 if __name__ == "__main__":

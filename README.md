@@ -13,6 +13,10 @@ Ana sayfada (`/`) **🔑 Key Oluştur** butonu:
 
 Her key sadece seçtiğin sağlayıcılara erişir. Sonra tüm çağrılara `?key=sk-...` ekle.
 
+**🤖 Arena (AI görsel):** Key oluştururken "Arena" çipini seçersen key AI görsel üretim uçlarına da
+erişir (`/api/v1/arena/*`). Arena çipi seçilmemiş key'ler bu uçlarda 403 alır; mevcut müzik key'lerin
+etkilenmez. Kurulum (Render'da arena-proxy servisi + oturum): **[ARENA_KURULUM.md](ARENA_KURULUM.md)**
+
 **Kalıcılık:** keyler GitHub'da `depolama` dalındaki `keys.json`'da saklanır — sunucu restart/redeploy etse bile keyler kaybolmaz (main dalına dokunulmaz, deploy tetiklenmez).
 
 ### Ortam değişkenleri (Render → Environment)
@@ -54,6 +58,10 @@ Ayar env'leri (opsiyel): `SARKI_CACHE_TTL`, `SARKI_DOSYA_OMUR`, `SARKI_TESLIM_GE
 | POST | `/api/v1/keys/olustur` | `{isim, saglayicilar, parola}` |
 | GET | `/api/v1/keys/liste?parola=` | Key geçmişi |
 | POST | `/api/v1/keys/sil` | `{key, parola}` |
+| GET | `/api/v1/arena/gorsel?prompt=...&mod=url\|json\|indir\|base64&key=` | **🤖 AI görsel üretimi** (arena-proxy köprüsü) — `oran`, `stil`, `negatif`, `bekleme=0` (asenkron) |
+| POST | `/api/v1/arena/gorsel` | Aynı uç, JSON gövdesiyle |
+| GET | `/api/v1/arena/durum?key=` | Arena köprüsü bağlantı/sağlık durumu |
+| GET | `/api/v1/arena/sonuc/{is_id}?key=` | Asenkron üretim işinin durumu |
 
 > İlk key oluşturulana kadar API açıktır; ilk key'ten sonra tüm uçlar geçerli key ister.
 

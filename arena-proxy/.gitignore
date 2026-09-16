@@ -1,0 +1,29 @@
+# ---- secrets / ortam ----
+.env
+.env.*
+!.env.example
+!render.yaml
+
+# ---- oturum & cookie (ASLA commit edilmemeli) ----
+data/sessions/*
+!data/sessions/.gitkeep
+data/profiles/
+data/artifacts/
+data/screenshots/
+data/traces/
+*.storageState.json
+cookies*.json
+cookies*.txt
+session.env
+
+# ---- node ----
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# ---- editor / os ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log

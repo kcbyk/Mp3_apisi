@@ -1,0 +1,76 @@
+services:
+  # ==========================================================================
+  # arena-proxy — Render Blueprint (ayrı servis olarak dağıtım)
+  #
+  # Kullanım: Bu dosyayı arena-proxy klasörünün KÖKÜNE koyup Render'da
+  # "New → Blueprint" ile bağlayın (render.yaml yolu: arena-proxy/render.yaml).
+  # Alternatif (önerilen): Render'da manuel "Docker" web servisi açıp
+  # Root Directory = arena-proxy seçin — bkz. ../ARENA_KURULUM.md
+  # ==========================================================================
+  - type: web
+    name: arena-proxy
+    runtime: docker
+    plan: free                      # 512 MB RAM — ayarlar tek context'e göre optimize
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: false               # tarayıcı servisi; kontrollü deploy daha güvenli
+    envVars:
+      # --- Bulut modu: dizinler /tmp, tek context/tek iş ---
+      - key: RENDER
+        value: "1"
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: AUTH_ENABLED
+        value: "true"
+      # ⚠️ API_KEYS: dashboard'dan girin (gizli). Örn: sk-arena-<rastgele>
+      - key: API_KEYS
+        sync: false
+
+      # --- Hedef platform ---
+      - key: TARGET_BASE_URL
+        value: https://arena.ai
+      - key: TARGET_GENERATE_PATH
+        value: /
+      - key: DRY_RUN
+        value: "false"
+
+      # --- Oturum: kalıcı disk yok → base64 env ile verilir ---
+      #    Yerelde üretin:  npm run session:env -- --out session.env
+      - key: SESSION_MODE
+        value: storage
+      - key: SESSION_STATE_B64
+        sync: false
+
+      # --- Anti-bot / performans ---
+      - key: STEALTH_ENABLED
+        value: "true"
+      - key: HUMANIZE
+        value: "true"
+      - key: MAX_CONTEXTS
+        value: "1"
+      - key: QUEUE_CONCURRENCY
+        value: "1"
+      - key: MAX_QUEUE_SIZE
+        value: "20"
+      - key: JOB_TIMEOUT_MS
+        value: "120000"
+      - key: GENERATION_TIMEOUT_MS
+        value: "90000"
+
+      # --- Çıktı: CDN linkini doğrudan döndür (bayt taşımadan en hızlı) ---
+      - key: ARTIFACT_DELIVERY
+        value: url
+      - key: MAX_DOWNLOAD_BYTES
+        value: "26214400"
+
+      # --- Ön ısıtma: Render free'de soğuk başlangıcı azaltır ---
+      - key: PREWARM_BROWSER
+        value: "true"
+
+      # Render free 15 dk hareketsizlikte uyur. mps-apisi tarafındaki
+      # ARENA_TIMEOUT varsayılanı (150 sn) bu uyanma süresini kapsar.

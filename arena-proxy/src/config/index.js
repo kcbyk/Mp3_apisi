@@ -1,0 +1,272 @@
+/**
+ * src/config/index.js
+ * ---------------------------------------------------------------------------
+ * Tüm konfigürasyon tek yerden, zod ile doğrulanarak okunur.
+ * Eksik/yanlış env → process açılışta anlaşılır bir hatayla durur (fail-fast).
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+import { z } from 'zod';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export const ROOT_DIR = path.resolve(__dirname, '..', '..');
+
+dotenv.config({ path: path.join(ROOT_DIR, '.env') });
+
+/* --------------------------- yardımcı parser'lar --------------------------- */
+const bool = (def) =>
+  z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v === '' ? def : ['1', 'true', 'yes', 'on'].includes(v.toLowerCase())));
+
+const num = (def) =>
+  z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v === '' ? def : Number(v)))
+    .pipe(z.number().int());
+
+const list = (def = []) =>
+  z
+    .string()
+    .optional()
+    .transform((v) =>
+      (v === undefined || v === '' ? def : v.split(',').map((s) => s.trim()).filter(Boolean)),
+    );
+
+const str = (def = '') =>
+  z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined ? def : v));
+
+const schema = z.object({
+  NODE_ENV: str('development'),
+  PORT: num(8080),
+  HOST: str('0.0.0.0'),
+  LOG_LEVEL: str('info'),
+  LOG_PRETTY: bool(false),
+  CORS_ORIGINS: list(['*']),
+  API_PREFIX: str('/api/v1'),
+
+  API_KEYS: list([]),
+  AUTH_ENABLED: bool(true),
+
+  BROWSER_HEADLESS: bool(true),
+  BROWSER_CHANNEL: str(''),
+  MAX_CONTEXTS: num(3),
+  MAX_PAGES_PER_CONTEXT: num(25),
+  CONTEXT_MAX_AGE_MS: num(900_000),
+  BROWSER_MAX_AGE_MS: num(3_600_000),
+  PERSISTENT_PROFILE: bool(false),
+  PROFILE_BASE_DIR: str('./data/profiles'),
+  VIEWPORT_WIDTH: num(1440),
+  VIEWPORT_HEIGHT: num(900),
+  EXTRA_CHROMIUM_ARGS: list([]),
+  BLOCK_URL_PATTERNS: list([]),
+  BLOCK_FONTS: bool(false),
+  BLOCK_MEDIA: bool(false),
+  NAVIGATION_TIMEOUT_MS: num(45_000),
+
+  SESSION_MODE: z.enum(['storage', 'profile']).catch('storage'),
+  SESSION_STATE_PATH: str('./data/sessions/arena.json'),
+  // Bulut ortamları (Render vb.) için: oturum dosyası olmadan, env içinden base64/JSON
+  SESSION_STATE_B64: str(''),
+  SESSION_STATE_JSON: str(''),
+  SESSION_RELOAD_INTERVAL_MS: num(60_000),
+
+  STEALTH_ENABLED: bool(true),
+  HUMANIZE: bool(true),
+  USER_AGENT: str(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+  ),
+  LOCALE: str('en-US'),
+  TIMEZONE: str('Europe/Istanbul'),
+  ACCEPT_LANGUAGE: str('en-US,en;q=0.9'),
+
+  PROXY_ENABLED: bool(false),
+  PROXY_SERVER: str(''),
+  PROXY_USERNAME: str(''),
+  PROXY_PASSWORD: str(''),
+  PROXY_BYPASS: list([]),
+
+  QUEUE_CONCURRENCY: num(2),
+  QUEUE_RATE_PER_MIN: num(0), // 0 = otomatik (concurrency × 6)
+  MAX_QUEUE_SIZE: num(50),
+  JOB_TIMEOUT_MS: num(120_000),
+  QUEUE_WAIT_TIMEOUT_MS: num(60_000),
+
+  RETRY_ATTEMPTS: num(2),
+  RETRY_MIN_TIMEOUT_MS: num(1_000),
+  RETRY_MAX_TIMEOUT_MS: num(8_000),
+  RETRY_ON: list(['NavigationError', 'StepTimeoutError', 'ArtifactNotFoundError', 'BrowserClosedError']),
+
+  TARGET_NAME: str('arena'),
+  TARGET_BASE_URL: str('https://arena.ai'),
+  TARGET_GENERATE_PATH: str('/'),
+  SELECTORS_PATH: str('./src/scrapers/selectors/arena.json'),
+  ALLOWED_NAV_HOSTS: list([]),
+  STEP_TIMEOUT_MS: num(20_000),
+  GENERATION_TIMEOUT_MS: num(90_000),
+  ARTIFACT_POLL_INTERVAL_MS: num(500),
+  WAIT_FOR_DOM_RESULT: bool(true),
+  SCREENSHOT_ON_ERROR: bool(true),
+  SCREENSHOT_DIR: str('./data/screenshots'),
+  DRY_RUN: bool(false),
+
+  ARTIFACT_DELIVERY: z.enum(['url', 'base64', 'file', 'both']).catch('url'),
+  ARTIFACT_LOCAL_DIR: str('./data/artifacts'),
+  ARTIFACT_PUBLIC_BASE_URL: str(''),
+  MAX_DOWNLOAD_BYTES: num(26_214_400),
+  ALLOWED_ASSET_HOSTS: list([]),
+  DELETE_ARTIFACT_AFTER_MS: num(86_400_000),
+});
+
+const parsed = schema.safeParse(process.env);
+if (!parsed.success) {
+  console.error('[config] Geçersiz ortam değişkenleri:');
+  console.error(parsed.error.flatten().fieldErrors);
+  process.exit(1);
+}
+
+const env = parsed.data;
+const resolveFromRoot = (p) => (path.isAbsolute(p) ? p : path.resolve(ROOT_DIR, p));
+
+/**
+ * Bulut tespiti: Render gibi platformlarda dosya sistemi kalıcı DEĞİLDİR.
+ * - Tüm çalışma dizinleri /tmp altına alınır (yazılabilir tek yer)
+ * - Bellek sınırı için tek context / tek eşzamanlı iş varsayılan olur
+ * Kullanıcı env ile açıkça verirse onun değeri kazanır.
+ */
+const CLOUD = ['1', 'true', 'yes', 'on'].includes(String(process.env.RENDER || '').toLowerCase());
+const pick = (envAdi, ayarliDeger, bulutVarsayilan) =>
+  process.env[envAdi] === undefined && CLOUD ? bulutVarsayilan : ayarliDeger;
+
+/** public config nesnesi — kod içinde `config.browser.maxContexts` gibi okunur */
+export const config = {
+  env: env.NODE_ENV,
+  isProd: env.NODE_ENV === 'production',
+  server: {
+    port: env.PORT,
+    host: env.HOST,
+    logLevel: env.LOG_LEVEL,
+    // Test ortamında pretty transport (worker thread) kapalı: süreç asılı kalmasın
+    logPretty: env.NODE_ENV === 'test' ? false : env.LOG_PRETTY,
+    corsOrigins: env.CORS_ORIGINS,
+    apiPrefix: env.API_PREFIX,
+  },
+  auth: {
+    enabled: env.AUTH_ENABLED,
+    keys: env.API_KEYS,
+  },
+  browser: {
+    headless: env.BROWSER_HEADLESS,
+    channel: env.BROWSER_CHANNEL || undefined,
+    maxContexts: pick('MAX_CONTEXTS', env.MAX_CONTEXTS, 1),
+    maxPagesPerContext: env.MAX_PAGES_PER_CONTEXT,
+    contextMaxAgeMs: env.CONTEXT_MAX_AGE_MS,
+    browserMaxAgeMs: env.BROWSER_MAX_AGE_MS,
+    persistentProfile: env.PERSISTENT_PROFILE,
+    profileBaseDir: resolveFromRoot(pick('PROFILE_BASE_DIR', env.PROFILE_BASE_DIR, '/tmp/arena-proxy/profiles')),
+    viewport: { width: env.VIEWPORT_WIDTH, height: env.VIEWPORT_HEIGHT },
+    extraArgs: env.EXTRA_CHROMIUM_ARGS,
+    blockUrlPatterns: env.BLOCK_URL_PATTERNS,
+    blockFonts: env.BLOCK_FONTS,
+    blockMedia: env.BLOCK_MEDIA,
+    navigationTimeoutMs: env.NAVIGATION_TIMEOUT_MS,
+  },
+  session: {
+    mode: env.SESSION_MODE,
+    statePath: resolveFromRoot(env.SESSION_STATE_PATH),
+    reloadIntervalMs: env.SESSION_RELOAD_INTERVAL_MS,
+    // Env içinden oturum (dosya sistemi kalıcı değilse): base64 veya düz JSON
+    stateB64: env.SESSION_STATE_B64.trim(),
+    stateJson: env.SESSION_STATE_JSON.trim(),
+  },
+  stealth: {
+    enabled: env.STEALTH_ENABLED,
+    humanize: env.HUMANIZE,
+    userAgent: env.USER_AGENT,
+    locale: env.LOCALE,
+    timezoneId: env.TIMEZONE,
+    acceptLanguage: env.ACCEPT_LANGUAGE,
+  },
+  proxy: {
+    enabled: env.PROXY_ENABLED,
+    server: env.PROXY_SERVER,
+    username: env.PROXY_USERNAME,
+    password: env.PROXY_PASSWORD,
+    bypass: env.PROXY_BYPASS,
+  },
+  queue: {
+    concurrency: pick('QUEUE_CONCURRENCY', env.QUEUE_CONCURRENCY, 1),
+    ratePerMinute: env.QUEUE_RATE_PER_MIN,
+    maxSize: env.MAX_QUEUE_SIZE,
+    jobTimeoutMs: env.JOB_TIMEOUT_MS,
+    waitTimeoutMs: env.QUEUE_WAIT_TIMEOUT_MS,
+  },
+  retry: {
+    attempts: env.RETRY_ATTEMPTS,
+    minTimeout: env.RETRY_MIN_TIMEOUT_MS,
+    maxTimeout: env.RETRY_MAX_TIMEOUT_MS,
+    on: env.RETRY_ON,
+  },
+  target: {
+    name: env.TARGET_NAME,
+    baseUrl: env.TARGET_BASE_URL.replace(/\/+$/, ''),
+    generatePath: env.TARGET_GENERATE_PATH,
+    selectorsPath: resolveFromRoot(env.SELECTORS_PATH),
+    allowedNavHosts: env.ALLOWED_NAV_HOSTS,
+    stepTimeoutMs: env.STEP_TIMEOUT_MS,
+    generationTimeoutMs: env.GENERATION_TIMEOUT_MS,
+    artifactPollIntervalMs: env.ARTIFACT_POLL_INTERVAL_MS,
+    waitForDomResult: env.WAIT_FOR_DOM_RESULT,
+    screenshotOnError: env.SCREENSHOT_ON_ERROR,
+    screenshotDir: resolveFromRoot(pick('SCREENSHOT_DIR', env.SCREENSHOT_DIR, '/tmp/arena-proxy/screenshots')),
+    dryRun: env.DRY_RUN,
+  },
+  artifact: {
+    delivery: env.ARTIFACT_DELIVERY,
+    localDir: resolveFromRoot(pick('ARTIFACT_LOCAL_DIR', env.ARTIFACT_LOCAL_DIR, '/tmp/arena-proxy/artifacts')),
+    publicBaseUrl: env.ARTIFACT_PUBLIC_BASE_URL,
+    maxDownloadBytes: env.MAX_DOWNLOAD_BYTES,
+    allowedAssetHosts: env.ALLOWED_ASSET_HOSTS,
+    deleteAfterMs: env.DELETE_ARTIFACT_AFTER_MS,
+  },
+};
+
+/** Çalışma zamanı dizinlerini hazırla */
+export function ensureRuntimeDirs() {
+  const dirs = [
+    path.dirname(config.session.statePath),
+    path.join(ROOT_DIR, 'data', 'sessions'),
+    config.artifact.localDir,
+    config.target.screenshotDir,
+    config.browser.profileBaseDir,
+  ];
+  for (const d of dirs) fs.mkdirSync(d, { recursive: true });
+}
+
+/** Başlangıçta log'lanacak, sır içermeyen özet */
+export function redactedSummary() {
+  return {
+    env: config.env,
+    port: config.server.port,
+    authEnabled: config.auth.enabled && config.auth.keys.length > 0,
+    maxContexts: config.browser.maxContexts,
+    concurrency: config.queue.concurrency,
+    sessionMode: config.session.mode,
+    sessionSource: config.session.stateB64 ? 'env:SESSION_STATE_B64'
+      : config.session.stateJson ? 'env:SESSION_STATE_JSON'
+      : fs.existsSync(config.session.statePath) ? 'file' : 'YOK',
+    cloudMode: CLOUD,
+    stealth: config.stealth.enabled,
+    proxy: config.proxy.enabled ? String(config.proxy.server).replace(/\/\/.*@/, '//***@') : false,
+    delivery: config.artifact.delivery,
+    dryRun: config.target.dryRun,
+    target: config.target.baseUrl,
+  };
+}
