@@ -13,11 +13,14 @@
  */
 import PQueue from 'p-queue';
 import pRetry, { AbortError } from 'p-retry';
-import { config } from '../config/index.js';
+import { config, timeoutCoherenceWarnings } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import { AppError, JobTimeoutError, QueueFullError } from '../errors.js';
 
 const log = logger.child({ mod: 'queue' });
+
+/** Deneme başına üretim dışı ek süre (navigate + onay + prompt) — canlı ölçüm ~15-20sn */
+const ATTEMPT_OVERHEAD_MS = 30_000;
 
 export class TaskQueue {
   constructor() {
@@ -98,6 +101,16 @@ export class TaskQueue {
    * @returns {Promise<T>}
    */
   async run(fn, { taskId, timeoutMs = config.queue.jobTimeoutMs, attempts = config.retry.attempts + 1, onRetry } = {}) {
+    // --- Süre tutarlılığı: iş timeout'u tüm denemeleri karşılıyor mu? ---
+    // Değilse son denemeler abort'a kurban gider; erkenden, anlaşılır uyarı ver.
+    // (Canlı hata: 300sn iş süresi + 3 deneme → 2. ve 3. deneme ~30sn sonra kesildi.)
+    const coherence = timeoutCoherenceWarnings(timeoutMs, {
+      attempts,
+      generationTimeoutMs: config.target.generationTimeoutMs,
+      attemptOverheadMs: ATTEMPT_OVERHEAD_MS,
+    });
+    for (const w of coherence) log.warn({ taskId, timeoutMs, attempts }, w);
+
     // --- Backpressure: kuyruk sınırı ---
     if (this.queue.size >= config.queue.maxSize) {
       log.warn({ taskId, size: this.queue.size }, 'kuyruk dolu, istek reddedildi (429)');
@@ -122,6 +135,22 @@ export class TaskQueue {
           const is = pRetry(
             async (attemptNumber) => {
               if (controller.signal.aborted) throw controller.signal.reason;
+              // Kaderi belli denemeyi başlatma: kalan süre tam boy bir denemeyi
+              // karşılamıyorsa (ör. 20dk'lık ilk denemenin ardından 4dk kaldıysa)
+              // bu deneme zaten abort'a kurban gidecek — tarayıcıyı boşa yakma,
+              // son hatayı dürüstçe döndür. (Canlı vaka: 2. deneme 29sn sonra
+              // JOB_TIMEOUT ile öldü, hiçbir şey kazandırmadı.)
+              if (attemptNumber > 1) {
+                const perAttemptMs = config.target.generationTimeoutMs + ATTEMPT_OVERHEAD_MS;
+                const elapsedMs = Date.now() - started;
+                if (elapsedMs + perAttemptMs >= timeoutMs) {
+                  log.warn(
+                    { taskId, attempt: attemptNumber, elapsedMs, kalanMs: Math.max(0, timeoutMs - elapsedMs), perAttemptMs },
+                    'kalan süre tam denemeyi karşılamıyor → deneme atlanıyor, son hata döndürülüyor',
+                  );
+                  throw new AbortError(lastError ?? new JobTimeoutError(timeoutMs));
+                }
+              }
               try {
                 await this._awaitSlot(controller.signal); // dakikalık hız sınırı
                 return await fn({ signal: controller.signal, attempt: attemptNumber, taskId });

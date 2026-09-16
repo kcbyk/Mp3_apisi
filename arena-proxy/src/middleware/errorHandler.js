@@ -6,6 +6,18 @@ import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import { AppError } from '../errors.js';
 
+/**
+ * Sık görülen "bekledi ama çıkmadı" hataları için istemciye dönük aksiyon ipuçları.
+ * (Canlı not: istemci tarafındaki curl/async istemcisi senkron isteği 3dk'da kestiğinde
+ * sunucu 504 JOB_TIMEOUT'unu zaten yazamıyor — bu ipuçları async akışa yönlendirir.)
+ */
+const ERROR_HINTS = {
+  JOB_TIMEOUT:
+    'Uzun üretimlerde senkron çağrı yerine {"async":true} gönderin; sonra GET /api/v1/jobs/<job_id> ile sonucu izleyin. İstemci timeout\'unu JOB_TIMEOUT_MS\'den büyük tutun.',
+  ARTIFACT_NOT_FOUND:
+    'Üretim süresi GENERATION_TIMEOUT_MS\'i aştıysa süreyi büyütün; sayfa kapıya takıldıysa POST /api/v1/debug/probe (gonder:true) ile canlı teşhis yapın.',
+};
+
 export function notFoundHandler(req, res) {
   res.status(404).json({
     success: false,
@@ -27,6 +39,9 @@ export function errorHandler(err, req, res, next) {
     },
     request_id: req.id,
   };
+
+  // Bilinen kodlara istemciye dönük çözüm ipucu ekle
+  if (ERROR_HINTS[code]) payload.error.hint = ERROR_HINTS[code];
 
   // Hata ayıklama bilgisi: üretimde yalnızca 5xx ve DEBUG_ERRORS=true iken
   if ((!config.isProd || process.env.DEBUG_ERRORS === 'true') && (isApp ? err.details : true)) {

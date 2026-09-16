@@ -439,3 +439,40 @@ Sunucu tarafı yenileme yok; zincir yalnızca "tek tüketici + yakala + sakla" i
 Bir kez yakalanan zincir, sayfa her açıldığında kendini döndürür ve daima tazelenir.
 Zincir bir kez koptuysa (reuse iptali) **yeni dışa aktarım zorunludur** — iptal edilmiş
 yenileme jetonu hiçbir yolla geri gelmez.
+
+### 12.6 Azure VM (docker run) — süre env'leri ve senkron çağrı tuzağı (canlı vaka, 2026-09-16)
+
+Belirti: `POST /api/v1/generate-asset` senkron çağrıda istemci (`curl -m 180`) 180.sn'de
+koptu → log'da `statusCode: null, responseTime: 180002`. Sunucuda: 1. deneme 240sn sonra
+`ARTIFACT_NOT_FOUND`; 2. deneme ancak 29sn yaşayabildi, `JOB_TIMEOUT` (300sn) ile abort edildi.
+
+Kök neden zinciri:
+1. Konteyner env'siz başlatılmış → kısa süreler: `GENERATION_TIMEOUT_MS=240000`,
+   `JOB_TIMEOUT_MS=300000`, `RETRY_ATTEMPTS=3`.
+2. İş süresi (300sn) tek tam denemeden (~270sn) az uzun → retry'lar kağıt üstünde kaldı:
+   2. ve 3. deneme başlar başlamaz iş zaman aşımına kurban gitti.
+3. İstemci erken öldüğü için 504 yanıtını hiç görmedi.
+
+Kalıcı düzeltmeler (kodda):
+- Kod **varsayılanları** `.env.example` ile hizalandı: 25dk iş / 20dk üretim beklemesi.
+- Açılışta **süre tutarlılığı uyarısı** (`★ arena-proxy başlatılıyor` logundaki `warnings`).
+- **Doomed-retry skip:** kalan süre tam denemeyi karşılamıyorsa yeni deneme hiç
+  başlatılmaz; son hata dürüstçe döner (tarayıcı boşa yakılmaz).
+- 502/504 yanıtlarına `error.hint` alanı: istemciyi `{"async":true}` akışına yönlendirir.
+
+Kural: `JOB_TIMEOUT_MS ≥ GENERATION_TIMEOUT_MS + 30sn + (deneme_sayısı-1) × 120sn`.
+
+Azure'da önerilen başlatma:
+```bash
+docker run -d --name arena-proxy --restart unless-stopped \
+  -p 8080:8080 \
+  -e GENERATION_TIMEOUT_MS=1200000 \
+  -e JOB_TIMEOUT_MS=1500000 \
+  -e RETRY_ATTEMPTS=2 \
+  -v $(pwd)/data:/app/data \
+  arena-proxy
+```
+
+Senkron testte istemci süresi iş süresinden büyük olmalı: `curl -m 1500 ...`.
+İdeal kullanım yine asenkron: `{"prompt":"...","async":true}` → `GET /api/v1/jobs/<job_id>`.
+İstemci kopsa bile iş arka planda yaşar; sonuç `/jobs/<job_id>`'den okunur.

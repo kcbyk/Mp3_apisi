@@ -112,7 +112,9 @@ const schema = z.object({
   QUEUE_CONCURRENCY: num(2),
   QUEUE_RATE_PER_MIN: num(0), // 0 = otomatik (concurrency × 6)
   MAX_QUEUE_SIZE: num(50),
-  JOB_TIMEOUT_MS: num(120_000),
+  // Tek işin toplam ömrü — TÜM denemeleri kapsar. Arena 'Max' üretimi canlıda 10+ dk
+  // sürebildiği için kısa tutmak retry'ları yarıda keser (bkz. timeoutCoherenceWarnings).
+  JOB_TIMEOUT_MS: num(1_500_000),
   QUEUE_WAIT_TIMEOUT_MS: num(60_000),
 
   RETRY_ATTEMPTS: num(2),
@@ -126,7 +128,9 @@ const schema = z.object({
   SELECTORS_PATH: str('./src/scrapers/selectors/arena.json'),
   ALLOWED_NAV_HOSTS: list([]),
   STEP_TIMEOUT_MS: num(20_000),
-  GENERATION_TIMEOUT_MS: num(90_000),
+  // "Görsel URL'ini yakala" bekleme süresi — Arena'nın ağır modelleri yoğun saatlerde
+  // dakikalarca üretebiliyor (canlı gözlem). Kısa tutulursa ARTIFACT_NOT_FOUND döner.
+  GENERATION_TIMEOUT_MS: num(1_200_000),
   // Gönderim stratejisi: auto → arena.ai'de Enter (buton tıklaması ToS/reCAPTCHA kapısını tetikler),
   // diğer hedeflerde butona tıklama. 'enter' | 'click' ile sabitlenebilir.
   TARGET_SEND_MODE: str('auto'),
@@ -279,6 +283,39 @@ export const config = {
   },
 };
 
+/**
+ * Süre tutarlılığı denetimi: JOB_TIMEOUT_MS tüm retry denemelerini karşılayabiliyor mu?
+ *
+ * Canlı hata (2026-09-16, Azure): JOB_TIMEOUT_MS=300sn + GENERATION_TIMEOUT_MS=240sn +
+ * 3 deneme → 1. deneme ARTIFACT_NOT_FOUND, 2. deneme ancak ~29sn bekleyebildi,
+ * iş timeout'u kalan denemeleri yarıda abort etti.
+ *
+ * @param {number} jobTimeoutMs  iş başına toplam süre
+ * @param {{attempts?:number, generationTimeoutMs?:number, attemptOverheadMs?:number}} opts
+ * @returns {string[]} boş dizi = tutarlı
+ */
+export function timeoutCoherenceWarnings(jobTimeoutMs = config.queue.jobTimeoutMs, {
+  attempts = config.retry.attempts + 1,
+  generationTimeoutMs = config.target.generationTimeoutMs,
+  attemptOverheadMs = 30_000, // navigate + onay + prompt doldurma (canlı ölçüm ~15-20sn)
+  fastRetryBudgetMs = 120_000, // hızlı-hata (nav/oturum) retry'ları için kalan pay
+} = {}) {
+  const warnings = [];
+  const perAttemptMs = generationTimeoutMs + attemptOverheadMs;
+  // Kural: iş süresi EN AZ 1 tam denemeyi + hızlı-hata retry paylarını karşılamalı.
+  // Tam boy deneme sonrası kalan süre yetmezse queue o denemeyi zaten atlıyor
+  // (doomed-retry skip); bu kontrol orantısız kombinasyonları AÇILIŞTA görünür kılar.
+  const minMs = perAttemptMs + Math.max(0, attempts - 1) * fastRetryBudgetMs;
+  if (jobTimeoutMs < minMs) {
+    warnings.push(
+      `JOB_TIMEOUT_MS (${jobTimeoutMs}ms) kısa: ~${minMs}ms+ önerilir ` +
+        `(1 tam deneme ${perAttemptMs}ms + ${Math.max(0, attempts - 1)} × hızlı-hata payı ${fastRetryBudgetMs}ms). ` +
+        `Süre yetmeyen denemeler atlanır → JOB_TIMEOUT_MS büyüt veya RETRY_ATTEMPTS düşür.`,
+    );
+  }
+  return warnings;
+}
+
 /** Çalışma zamanı dizinlerini hazırla */
 export function ensureRuntimeDirs() {
   const dirs = [
@@ -309,5 +346,11 @@ export function redactedSummary() {
     delivery: config.artifact.delivery,
     dryRun: config.target.dryRun,
     target: config.target.baseUrl,
+    timeouts: {
+      jobTimeoutMs: config.queue.jobTimeoutMs,
+      generationTimeoutMs: config.target.generationTimeoutMs,
+      retryAttempts: config.retry.attempts,
+    },
+    warnings: timeoutCoherenceWarnings(),
   };
 }
