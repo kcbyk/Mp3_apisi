@@ -144,7 +144,109 @@ router.get(
   }),
 );
 
+/* ------------------- POST /debug/probe (canlı DOM teşhisi) ---------------- */
+/**
+ * Hedef sayfayı gerçek tarayıcıyla açar, seçicilerin eşleşme durumunu,
+ * giriş duvarını, modal/uyarı katmanlarını ve gönderim adımını raporlar.
+ * Gövde: { gonder?: boolean, prompt?: string }  (varsayılan: yalnızca incele)
+ */
+function adayCoz(page, aday) {
+  const { by, value, name, role, nth } = aday;
+  if (by === 'css') return nth === -1 ? page.locator(value).last() : page.locator(value).nth(nth ?? 0);
+  if (by === 'testid') return page.getByTestId(value).nth(nth ?? 0);
+  if (by === 'text') return page.getByText(value, { exact: false }).nth(nth ?? 0);
+  if (by === 'role') return page.getByRole(role, name ? { name } : {}).nth(nth ?? 0);
+  return page.locator(value ?? 'body');
+}
+
+async function grupIncele(page, grup, ad) {
+  const cikti = [];
+  for (let i = 0; i < (grup ?? []).length; i += 1) {
+    const aday = grup[i];
+    try {
+      const l = adayCoz(page, aday);
+      const adet = await l.count();
+      if (!adet) continue;
+      const gorunur = await l.first().isVisible().catch(() => false);
+      const kapali = await l.first().isDisabled?.().catch(() => false);
+      cikti.push({ aday: i, secici: aday.value ?? `${aday.by}:${aday.role ?? ''}${aday.name ? ':' + aday.name : ''}`, adet, gorunur, kapali });
+    } catch {
+      /* eşleşmedi */
+    }
+  }
+  return { [ad]: cikti };
+}
+
+router.post(
+  '/debug/probe',
+  asyncHandler(async (req, res) => {
+    const gonder = Boolean(req.body?.gonder);
+    const prompt = String(req.body?.prompt ?? 'test görseli');
+    const kiralama = await browserManager.acquirePage({ taskId: 'probe' });
+    const rapor = { gonder, prompt };
+    const konsol = [];
+    const sayfaHatalari = [];
+    try {
+      const page = kiralama.page;
+      page.on('console', (m) => {
+        if (['error', 'warning'].includes(m.type()) && konsol.length < 25) konsol.push(`${m.type()}: ${String(m.text()).slice(0, 200)}`);
+      });
+      page.on('pageerror', (e) => sayfaHatalari.length < 10 && sayfaHatalari.push(String(e.message).slice(0, 200)));
+
+      const hedef = `${config.target.baseUrl}${config.target.generatePath || '/'}`;
+      const yanit = await page.goto(hedef, { waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch((e) => ({ durumHatasi: String(e.message).slice(0, 120) }));
+      rapor.http = yanit?.status?.() ?? null;
+      rapor.hedef = hedef;
+      await page.waitForTimeout(4000);
+      await dismissConsent(page).catch(() => {});
+      rapor.url = page.url();
+      rapor.girisDuvari = await girisDuvariniTespit(page).catch((e) => `hata: ${String(e.message).slice(0, 80)}`);
+
+      const sel = loadSelectors();
+      const gruplar = ['promptInput', 'generateButton', 'aspectRatioButtons', 'aspectRatioDropdownTrigger', 'challengeIndicators', 'consentBanner'];
+      rapor.eslesme = Object.assign({}, ...(await Promise.all(gruplar.map((g) => grupIncele(page, sel[g], g)))));
+
+      // Görünür metin + katmanlar
+      rapor.metin = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 400);
+      rapor.katmanlar = await page
+        .locator("[role='dialog'], [data-state='open'], [class*='modal' i], [class*='overlay' i]")
+        .evaluateAll((dlar) => dlar.slice(0, 8).map((d) => ({ etiket: d.getAttribute('role') || d.className?.toString?.().slice(0, 60) || '', metin: (d.innerText || '').replace(/\s+/g, ' ').slice(0, 120), gorunur: d.offsetParent !== null })))
+        .catch(() => []);
+
+      if (gonder) {
+        const girdi = await page.locator("textarea[placeholder^='Describe the image'], textarea[placeholder*='Describe the image']").first();
+        rapor.girdiVar = await girdi.count();
+        rapor.girdiOncekiDeger = await girdi.inputValue().catch(() => null);
+        await girdi.fill(prompt).catch((e) => (rapor.doldurmaHatasi = String(e.message).slice(0, 120)));
+        await page.waitForTimeout(800);
+        rapor.girdiSonrakiDeger = await girdi.inputValue().catch(() => null);
+        const btn = page.locator("button[aria-label='Send message']").first();
+        rapor.butonAdet = await btn.count();
+        rapor.butonKapali = await btn.isDisabled().catch(() => null);
+        rapor.butonGorunur = await btn.isVisible().catch(() => null);
+        await girdi.focus().catch(() => {});
+        await page.keyboard.press('Enter').catch(() => {});
+        await page.waitForTimeout(2500);
+        rapor.enterSonrasiGirdi = await girdi.inputValue().catch(() => null);
+        rapor.enterSonrasiGenerating = await grupIncele(page, loadSelectors().generatingIndicator, 'generatingIndicator');
+        await page.waitForTimeout(4000);
+        rapor.sonUrl = page.url();
+        rapor.sonMetin = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+      }
+
+      const png = await page.screenshot({ type: 'jpeg', quality: 60, fullPage: false }).catch(() => null);
+      if (png) rapor.screenshot_base64 = Buffer.from(png).toString('base64');
+      rapor.konsol = konsol;
+      rapor.sayfaHatalari = sayfaHatalari;
+      res.json({ success: true, rapor });
+    } finally {
+      await kiralama.release({ ok: true });
+    }
+  }),
+);
+
 /* ------------------------- GET /debug/selectors --------------------------- */
+
 router.get(
   '/debug/selectors',
   asyncHandler(async (req, res) => {
