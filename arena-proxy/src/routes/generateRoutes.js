@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { config, ROOT_DIR } from '../config/index.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { generateAsset, selectorStats } from '../services/assetService.js';
+import { tarayiciCerezleriniYakala } from '../automation/sessionRefresh.js';
 import { browserManager } from '../automation/browserManager.js';
 import { sessionStore, normalizeStorageState } from '../automation/sessionStore.js';
 import { oturumDurumu, oturumuYenile } from '../automation/sessionRefresh.js';
@@ -254,6 +255,8 @@ router.post(
       if (png) rapor.screenshot_base64 = Buffer.from(png).toString('base64');
       rapor.konsol = konsol;
       rapor.sayfaHatalari = sayfaHatalari;
+      // Onay (cookie-preferences) ve varsa döndürülmüş jetonları kalıcılaştır
+      await tarayiciCerezleriniYakala(kiralama.context, { neden: 'prob' }).catch(() => {});
       res.json({ success: true, rapor });
     } finally {
       await kiralama.release({ ok: true });

@@ -6,6 +6,30 @@
   "consentBanner": [
     {
       "by": "css",
+      "value": "[role='dialog'] button:has-text('Accept Cookies')",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "button:has-text('Accept Cookies')",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "button:has-text('Manage Cookies')",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "css",
+      "value": "button:has-text('I understand'), button:has-text('I Understand')",
+      "nth": 0,
+      "optional": true
+    },
+    {
+      "by": "css",
       "value": "[role='dialog'] button:has-text('Save Preferences')",
       "nth": 0,
       "optional": true

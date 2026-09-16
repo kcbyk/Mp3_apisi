@@ -190,11 +190,15 @@ async function cerezTercihDiyaloguZorlaKapat(page) {
       .evaluate((katman) => {
         const gorunur = (e) => !!e && e.offsetParent !== null && e.getBoundingClientRect().width > 1;
         const dialogVar = [...document.querySelectorAll('div,section,aside,form')].some(
-          (e) => gorunur(e) && /manage cookie preferences/i.test((e.innerText || '').slice(0, 200)),
+          (e) => gorunur(e) && /manage cookie preferences|this website uses cookies|accept cookies/i.test((e.innerText || '').slice(0, 300)),
         );
         if (!dialogVar) return { kapandi: true, tiklanan: null };
 
-        const oncelik = ['save preferences', 'kaydet', 'cancel', 'iptal', 'close', 'dismiss', 'kapat', 'accept all', 'accept'];
+        const oncelik = [
+          'accept cookies', 'accept all cookies', 'accept all', 'kabul et', 'agree',
+          'i understand', 'i agree', 'save preferences', 'kaydet', 'got it',
+          'manage cookies', 'cancel', 'iptal', 'close', 'dismiss', 'kapat',
+        ];
         const butonlar = [...document.querySelectorAll('button,[role=button]')].filter((b) => gorunur(b) && !b.disabled);
         for (const aranan of oncelik) {
           const bul =
@@ -275,7 +279,8 @@ async function cerezTercihDiyaloguAcikMi(page) {
     .evaluate(() => {
       const gorunur = (e) => !!(e && e.offsetParent !== null && e.getBoundingClientRect().width > 0);
       const dlgler = [...document.querySelectorAll("[role='dialog'],[data-state='open'],[class*='modal' i]")].filter(gorunur);
-      if (dlgler.some((dl) => /manage cookie preferences/i.test(dl.innerText || ''))) return true;
+      if (dlgler.some((dl) => /manage cookie preferences|this website uses cookies|accept cookies/i.test(dl.innerText || ''))) return true;
+      if (dlgler.some((dl) => /do not submit to our services|i understand|we also use your conversations/i.test(dl.innerText || ''))) return true;
       // Metin tabanlı yedek: gövdede başlık varsa ve bir kaydet butonu görünüyorsa
       if (/manage cookie preferences/i.test(document.body.innerText || '')) {
         return [...document.querySelectorAll('button')].some(
