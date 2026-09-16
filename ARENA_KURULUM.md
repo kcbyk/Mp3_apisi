@@ -392,3 +392,50 @@ Entegrasyon **tamamen eklemeli** olduğu için geri almak tek commit:
 git revert <integrason-commit-sha>     # arena uçları, çip ve doküman bölümü geri alınır
 # veya: sadece Render'da ARENA_API_URL'i sil → uçlar 503 döner, sistem çalışmaya devam eder
 ```
+
+
+---
+
+## 12) Canlı doğrulama notları (2026-09-16) — kök nedenler ve kalıcı çözümler
+
+### 12.1 arena.ai onay katmanları besteyi kilitliyor (asıl "mesaj gönderilemedi" nedeni)
+Canlıda üç ayrı katman gözlendi; hepsi gönderimi (ve tıklamayı) engelliyor:
+
+| Katman | Metin | Eylem |
+|---|---|---|
+| A | "This website uses cookies" | **Accept Cookies** (kapatır) |
+| B | "Manage Cookie Preferences" | **Save Preferences** (yalnızca şartlar onaylıysa etkin) |
+| C | "Terms of Use & Privacy Policy" | **Agree** (Enter ile de) — önce bu, sonra B |
+
+Kod: `cerezOnayiniKur()` (arenaScraper) sırayı kendisi uygular; onay sonrası sayfayı
+yeniler. Onay durumu **hem çerezde (`cookie-preferences`) hem localStorage'da** tutulduğu
+için ikisi de oturum dosyasına yakalanır (`tarayiciCerezleriniYakala`).
+
+### 12.2 Tek tüketici kuralı (refresh token rotasyonu) — oturumun "ölümü"nü önler
+Supabase yenileme jetonunu **her kullanımda döndürür**. İki tüketici (ör. HTTP yenileme +
+sayfa kendi yenilemesi) aynı jetonu kullanırsa "refresh token reuse" tespiti **tüm aileyi
+iptal eder** ve hesap düşer (canlıda yaşandı → 07:10 bekçi denemesi reddedildi).
+
+Alınan önlemler:
+- `SESSION_HTTP_REFRESH=false` → yalnızca tarayıcı yolu (uygulamanın kendi yenilemesi).
+- Her tarayıcı context'i kapandıktan sonra çerezler **ve** localStorage yakalanıp kalıcı yazılır
+  (`tarayiciCerezleriniYakala`, `oturumuKaliciYaz`, `sessionStore.guncelle`).
+- Bellekteki oturum anında değişir; süreç yeniden başlamadan yeni jetonla çalışır.
+
+### 12.3 Süreler (Arena "Max" üretimi 10+ dakika sürebiliyor)
+- `JOB_TIMEOUT_MS=1500000` (25 dk) — iş zaman aşımı
+- `GENERATION_TIMEOUT_MS=1200000` (20 dk) — görsel URL'i yakalama
+- `SESSION_BROWSER_WAIT_MS=1500000` — bekçi tarayıcı beklemesi (jetonun bitişine göre dinamik)
+- `SESSION_KEEPALIVE_MINUTES=15`, `SESSION_REFRESH_THRESHOLD_MINUTES=15`
+
+### 12.4 Doğrulama uçları (API anahtarıyla)
+- `POST /api/v1/session-dogrula` → `{oturum_gecerli, giris_yapildi, url, sure_ms}` (hızlı; onayları da kapatır)
+- `POST /api/v1/debug/probe` `{gonder:true,prompt}` → seçici eşleşmeleri, katmanlar, gönderim yöntemi matrisi, ekran görüntüsü
+- `GET /api/v1/debug/screenshot?n=1` → son hata ekran görüntüsü (base64)
+- Hata kodları: `SESSION_INVALID` (hızlı başarısız — 2-3 sn), `ARTIFACT_NOT_FOUND`, `JOB_TIMEOUT`
+
+### 12.5 Çerez ölümsüzlüğü — durum
+Sunucu tarafı yenileme yok; zincir yalnızca "tek tüketici + yakala + sakla" ile yaşar.
+Bir kez yakalanan zincir, sayfa her açıldığında kendini döndürür ve daima tazelenir.
+Zincir bir kez koptuysa (reuse iptali) **yeni dışa aktarım zorunludur** — iptal edilmiş
+yenileme jetonu hiçbir yolla geri gelmez.
