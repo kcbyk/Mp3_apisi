@@ -154,6 +154,46 @@ izniyle yazar ve `arena-auth-prod-v1.0` çerezinin varlığını/uzunluğunu kon
 
 Sadece yerel dosyayı güncellemek için: `--kuru`. Base64'ü ekrana yazmak için: `--env`.
 
+#### ♾️ Ölümsüz oturum: çerezi bir kez al, servis kendisi yenilesin
+
+**Sorun:** arena.ai oturumu Supabase tabanlıdır; `access_token` 1 saat yaşar ve
+`refresh_token` **her kullanımda değişir**. Aynı çerezi iki yer kullanırsa (tarayıcın +
+sunucu, ya da iki sunucu kopyası) Supabase *yeniden kullanım* algılar ve **tüm jeton
+ailesini iptal eder** → oturum aniden ölür. (Canlıda tam olarak bu yaşandı.)
+
+**Çözüm — servis jetonun tek sahibi olsun:**
+
+| Adım | Ne yapar | Ayar |
+|---|---|---|
+| 1 | Jeton dolmadan **kendisi yeniler** (varsayılan 25 dk'da bir, HTTP ile ~20 ms) | `SESSION_KEEPALIVE_MINUTES=25`, `SESSION_REFRESH_THRESHOLD_MINUTES=20` |
+| 2 | Yeni çerezi **kalıcı yazar** (Render'da dosya sistemi kalıcı değil!) | `SESSION_PERSIST=file+render` |
+| 3 | Yeniden başlatmada en yeni jetonu kullanır | `SESSION_ENV_VAR_NAME=SESSION_STATE_B64` |
+| 4 | Üretimden önce ömrü 10 dk'nın altındaysa yine tazeler | otomatik |
+
+**Canlı kanıt:** bekçi 60 sn'de `kalanDk: 3 → 60` yenilemesini 16 ms'de yaptı ve dosyaya
+600 izniyle yazdı (yerel test, dönen jetonlu sahte hedef).
+
+**Tek kural (kritik):** Bu çerez **tek sahipli** olmalı.
+- Çerezi aldığın tarayıcıda o hesapla arena.ai'yi **kullanma** (her kullanım jetonu döndürür).
+- Servisi **tek kopya** çalıştır (iki örnek aynı jetonu yerse aile iptal olur). Yerel testte
+  aynı `SESSION_STATE_B64`'yi kullanma.
+- En temizi: otomasyon için **ayrı bir Arena hesabı** aç (bir kez giriş yap, çerezini al, o
+  hesabı tarayıcıda bir daha kullanma) → zincir sonsuza kadar servisde kalır.
+
+**Kalıcılık seçenekleri**
+1. `file+render` — servis kendi `SESSION_STATE_B64`'ünü Render API ile günceller.
+   ⚠️ `RENDER_API_KEY` **uzun ömürlü** olmalı (1 günlük anahtar ertesi gün oturumu dondurur).
+2. `file+github` — yeni çerez **özel** bir repoya yazılır (`GITHUB_SESSION_REPO`).
+   Kod, repo private değilse yazmayı **reddeder** (güvenlik).
+3. `file` — yalnız yerel/kalıcı diskli ortamlar (VPS, Docker volume).
+
+Yeni uçlar:
+```bash
+curl -X POST "https://arena-proxy.onrender.com/api/v1/session-yenile" -H "x-api-key: $ARENA_KEY"
+# → {"success":true,"once":{...},"sonra":{"kalanDk":59,...},"yol":"http","sure_ms":21}
+curl "https://arena-proxy.onrender.com/health"   # session.oturum.kalanDk / refreshVar / kullanici
+```
+
 #### Oturumu saniyeler içinde doğrula (canlı test)
 
 ```bash

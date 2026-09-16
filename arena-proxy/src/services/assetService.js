@@ -11,6 +11,7 @@ import { logger } from '../utils/logger.js';
 import { taskQueue } from '../automation/queue.js';
 import { browserManager } from '../automation/browserManager.js';
 import { sessionStore } from '../automation/sessionStore.js';
+import { oturumDurumu, yenilemeGerekliMi, oturumuYenile } from '../automation/sessionRefresh.js';
 import { runGeneration, normalizeParams, loadSelectors } from '../scrapers/arenaScraper.js';
 import { deliverArtifact } from '../scrapers/artifactDelivery.js';
 import { selectorReport } from '../utils/resilientSelector.js';
@@ -96,6 +97,13 @@ export async function generateAsset(rawParams, { requestId = crypto.randomUUID()
     { aspect_ratio: params.aspectRatio, style: params.style || null, prompt_chars: params.prompt.length, negative: Boolean(params.negativePrompt) },
     'üretim isteği alındı',
   );
+
+  // 0) Jeton dolmak üzereyse üretimden ÖNCE yenile (iş ortasında oturum düşmesin)
+  if (!config.target.dryRun && yenilemeGerekliMi(10)) {
+    await oturumuYenile({ taskId }).catch((e) =>
+      log_.warn({ err: String(e.message).slice(0, 100) }, 'üretim öncesi oturum tazeleme başarısız'),
+    );
+  }
 
   // İstek bazlı teslim biçimi (global config'i mutasyona uğratmadan)
   const delivery = ['url', 'base64', 'file', 'both'].includes(rawParams?.delivery) ? rawParams.delivery : undefined;
@@ -190,12 +198,13 @@ export async function generateAsset(rawParams, { requestId = crypto.randomUUID()
 /* -------------------------------------------------------------------------- */
 
 export function healthPayload() {
+  const oturum = config.target.dryRun ? { ok: true, skipped: 'dry_run' } : oturumDurumu();
   return {
     status: 'ok',
     uptime_s: Math.round(process.uptime()),
     env: config.env,
     dry_run: config.target.dryRun,
-    session: config.target.dryRun ? { ok: true, skipped: 'dry_run' } : sessionStore.describe(),
+    session: { ...(config.target.dryRun ? { skipped: 'dry_run' } : sessionStore.describe()), oturum: oturum },
     browser: browserManager.health(),
     queue: taskQueue.stats(),
     selectors_file: config.target.selectorsPath,

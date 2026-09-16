@@ -10,6 +10,7 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { generateAsset, selectorStats } from '../services/assetService.js';
 import { browserManager } from '../automation/browserManager.js';
 import { sessionStore, normalizeStorageState } from '../automation/sessionStore.js';
+import { oturumDurumu, oturumuYenile } from '../automation/sessionRefresh.js';
 import { loadSelectors, gotoWithChallengeCheck, dismissConsent, girisDuvariniTespit } from '../scrapers/arenaScraper.js';
 import { AppError, ValidationError } from '../errors.js';
 import { logger } from '../utils/logger.js';
@@ -120,6 +121,7 @@ router.get(
     res.json({
       success: true,
       version: sessionStore.version,
+      oturum: oturumDurumu(),
       cookies: state.cookies.map((c) => ({
         name: c.name,
         domain: c.domain,
@@ -131,6 +133,27 @@ router.get(
         value_preview: `${String(c.value).slice(0, 4)}***${String(c.value).slice(-2)} (${String(c.value).length} char)`,
       })),
       origins: state.origins.map((o) => ({ origin: o.origin, localStorage_keys: o.localStorage.map((i) => i.name) })),
+    });
+  }),
+);
+
+/* ---------------------- POST /session-yenile (jeton döndür) ---------------- */
+/**
+ * Oturum jetonunu şimdi yeniler (rotation bizde kalsın diye).
+ * Access token 1 saat ömürlüdür; bekçi normalde 25 dk'da bir kendisi yeniler.
+ */
+router.post(
+  '/session-yenile',
+  asyncHandler(async (req, res) => {
+    const once = oturumDurumu();
+    const sonuc = await oturumuYenile({ zorla: true, taskId: 'manuel-yenileme' });
+    res.status(sonuc.ok ? 200 : 502).json({
+      success: sonuc.ok,
+      once,
+      sonra: sonuc.durum,
+      yol: sonuc.yol ?? null,
+      sebep: sonuc.ok ? null : sonuc.sebep,
+      sure_ms: sonuc.sureMs,
     });
   }),
 );

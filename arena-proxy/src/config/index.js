@@ -77,6 +77,20 @@ const schema = z.object({
   SESSION_STATE_B64: str(''),
   SESSION_STATE_JSON: str(''),
   SESSION_RELOAD_INTERVAL_MS: num(60_000),
+  // Ölümsüz oturum (kendini yenileyen çerez) ayarları
+  SESSION_COOKIE_NAME: str('arena-auth-prod-v1.0'),
+  SESSION_KEEPALIVE_MINUTES: num(25),
+  SESSION_REFRESH_THRESHOLD_MINUTES: num(20),
+  SESSION_REFRESH_TIMEOUT_MS: num(45_000),
+  SESSION_PERSIST: str('file+render'),
+  SESSION_ENV_VAR_NAME: str('SESSION_STATE_B64'),
+  RENDER_API_KEY: str(''),
+  RENDER_SERVICE_ID: str(''),
+  // Özel GitHub deposunda kalıcılık (repo KESİNLİKLE private olmalı — kod kontrol eder)
+  GITHUB_TOKEN: str(''),
+  GITHUB_SESSION_REPO: str(''),          // örn: kullanici/arena-oturum
+  GITHUB_SESSION_PATH: str('arena-oturum.json'),
+  GITHUB_SESSION_BRANCH: str('main'),
 
   STEALTH_ENABLED: bool(true),
   HUMANIZE: bool(true),
@@ -188,6 +202,22 @@ export const config = {
     // Env içinden oturum (dosya sistemi kalıcı değilse): base64 veya düz JSON
     stateB64: env.SESSION_STATE_B64.trim(),
     stateJson: env.SESSION_STATE_JSON.trim(),
+
+    /* Ölümsüz oturum: jeton süresi dolmadan döndürülür ve kalıcı yazılır */
+    cookieName: env.SESSION_COOKIE_NAME,
+    keepAliveMinutes: env.SESSION_KEEPALIVE_MINUTES, // 0 → bekçi kapalı
+    refreshThresholdMinutes: env.SESSION_REFRESH_THRESHOLD_MINUTES,
+    refreshTimeoutMs: env.SESSION_REFRESH_TIMEOUT_MS,
+    // 'file' | 'render' | 'file+render' | 'none'  → yeni jeton nereye yazılsın
+    persist: String(env.SESSION_PERSIST || 'file+render').toLowerCase(),
+    envVarName: env.SESSION_ENV_VAR_NAME,
+    renderApiKey: env.RENDER_API_KEY.trim(),
+    renderServiceId: env.RENDER_SERVICE_ID.trim(),
+    githubToken: env.GITHUB_TOKEN.trim(),
+    githubRepo: env.GITHUB_SESSION_REPO.trim(),
+    githubPath: env.GITHUB_SESSION_PATH.trim(),
+    githubBranch: env.GITHUB_SESSION_BRANCH.trim(),
+    sonYenileme: null, // runtime: son başarılı yenileme zamanı
   },
   stealth: {
     enabled: env.STEALTH_ENABLED,

@@ -14,6 +14,7 @@ import { createApp } from './src/app.js';
 import { browserManager } from './src/automation/browserManager.js';
 import { taskQueue } from './src/automation/queue.js';
 import { sessionStore } from './src/automation/sessionStore.js';
+import { oturumBekcisiniBaslat, oturumBekcisiniDurdur, oturumDurumu } from './src/automation/sessionRefresh.js';
 
 const log = logger.child({ mod: 'server' });
 
@@ -77,6 +78,13 @@ async function main() {
     log.info({ path: config.session.statePath, intervalMs: config.session.reloadIntervalMs }, 'session izleyicisi aktif');
   }
 
+  // --- Ölümsüz oturum bekçisi: jeton dolmadan yenile, kalıcı yaz (rotation bizde kalsın) ---
+  if (!config.target.dryRun) {
+    const d = oturumDurumu();
+    log.info({ kalanDk: d.kalanDk ?? null, refreshVar: d.refreshVar ?? null, kalici: config.session.persist }, 'oturum durumu');
+    oturumBekcisiniBaslat();
+  }
+
   // --- Periyodik sağlık logu ---
   const healthTimer = setInterval(() => {
     log.debug({ browser: browserManager.health(), queue: taskQueue.stats() }, 'sağlık durumu');
@@ -101,6 +109,7 @@ async function main() {
       taskQueue.pause();
       await taskQueue.drain().catch(() => {});
       sessionStore.stopWatcher();
+      oturumBekcisiniDurdur();
       clearInterval(healthTimer);
       await browserManager.closeAll();
       log.info('Temiz çıkış tamamlandı.');
