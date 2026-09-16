@@ -346,6 +346,8 @@ export async function tarayiciIleYenile({ taskId = 'session-refresh' } = {}) {
     // 1) Tarayıcıya "süresi dolmuş" kopyayı yaz → site kendi istemcisiyle jetonu yenilesin
     const zorlama = yenilemeIcinCerezler(onceki);
     if (zorlama.length) await kiralama.context.addCookies(zorlama).catch(() => {});
+    // Karşılaştırma bu referansa göre yapılır: bizim yazdığımız kopya "yeni çerez" sayılmamalı
+    const zorlanmisDeger = zorlama.find((c) => c.name === config.session.cookieName)?.value ?? cer.value;
 
     // 2) Sayfayı aç; çerez değişene kadar bekle (site istemcisi ~dakika içinde yeniler)
     const url = `${config.target.baseUrl}${config.target.generatePath || '/'}`;
@@ -363,19 +365,22 @@ export async function tarayiciIleYenile({ taskId = 'session-refresh' } = {}) {
     let gelenler = await cerezleriTopla();
     const bitis = Date.now() + config.session.browserRefreshWaitMs;
     let tur = 0;
-    while (Date.now() < bitis && (!gelenler[config.session.cookieName] || gelenler[config.session.cookieName] === cer.value)) {
+    while (Date.now() < bitis && (!gelenler[config.session.cookieName] || gelenler[config.session.cookieName] === zorlanmisDeger)) {
       tur += 1;
       await kiralama.page.waitForTimeout(5000);
       gelenler = await cerezleriTopla();
       // 25 sn'de bir sayfayı tazele — ilk açılışta yenileme tetiklenmediyse şansı artırır
-      if (tur % 5 === 0 && gelenler[config.session.cookieName] === cer.value) {
+      if (tur % 5 === 0 && gelenler[config.session.cookieName] === zorlanmisDeger) {
         await kiralama.page.reload({ waitUntil: 'domcontentloaded', timeout: config.browser.navigationTimeoutMs }).catch(() => {});
       }
     }
 
     if (!gelenler[config.session.cookieName]) return { ok: false, sebep: 'tarayıcıda oturum çerezi bulunamadı' };
-    if (gelenler[config.session.cookieName] === cer.value) {
-      return { ok: false, sebep: `tarayıcı çerezi değiştirmedi (yenileme tetiklenmedi, ${Math.round((config.session.browserRefreshWaitMs) / 1000)} sn beklendi)` };
+    if (gelenler[config.session.cookieName] === zorlanmisDeger || gelenler[config.session.cookieName] === cer.value) {
+      return {
+        ok: false,
+        sebep: `tarayıcı yeni jeton yazmadı (${Math.round(config.session.browserRefreshWaitMs / 1000)} sn beklendi)`,
+      };
     }
 
     const yeniDurum = cerezleriUygula(onceki, gelenler);
