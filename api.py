@@ -599,6 +599,47 @@ GEMINI_TARZ = {"sicak": "Sıcak ve samimi, doğal bir arkadaş gibi rahat ve ins
                "sakin": "Yumuşak, rahatlatıcı ve sakin bir sesle konuş"}
 
 
+ELEVEN_SES = {"el": ("EXAVITQu4vr4xnSDxMaL", "eleven_multilingual_v2"),
+              "sarah": ("EXAVITQu4vr4xnSDxMaL", "eleven_multilingual_v2"),
+              "elkadin": ("EXAVITQu4vr4xnSDxMaL", "eleven_multilingual_v2"),
+              "laura": ("FGY2WhTYpPnrIDTdsKH5", "eleven_multilingual_v2"),
+              "roger": ("CwhRBWXzGAHq8TQ4Fs17", "eleven_multilingual_v2"),
+              "elerkek": ("CwhRBWXzGAHq8TQ4Fs17", "eleven_multilingual_v2"),
+              "george": ("JBFqnCBsd6RMkjVDRZzb", "eleven_multilingual_v2"),
+              "river": ("SAz9YHcvj6GT2YYXdXww", "eleven_multilingual_v2"),
+              "charlie": ("IKne3meq5aSn9XLyUdCD", "eleven_v3"),
+              "v3": ("IKne3meq5aSn9XLyUdCD", "eleven_v3"),
+              "callum": ("N2lVS1w4EtoT3dr4eOWO", "eleven_multilingual_v2"),
+              "harry": ("SOYHLrjzK2X1ezoPC6cr", "eleven_multilingual_v2")}
+
+
+def _eleven_tts(metin, voice_id, model):
+    """ElevenLabs hazır/klon TTS (ücretsiz 10K karakter/ay). -> (mp3_bayt, hata|None)"""
+    key = (os.environ.get("ELEVENLABS_API_KEY") or "").strip()
+    if not key:
+        return None, "ELEVENLABS_API_KEY tanımsız"
+    try:
+        r = _rq.post(f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128",
+                     headers={"xi-api-key": key, "Content-Type": "application/json"},
+                     json={"text": metin, "model_id": model,
+                           "voice_settings": {"stability": 0.45, "similarity_boost": 0.75}},
+                     timeout=90)
+    except Exception as e:  # noqa: BLE001
+        return None, f"ElevenLabs'e ulaşılamadı: {e}"
+    if not r.ok:
+        try:
+            kod = (r.json().get("detail") or {}).get("status") or str(r.status_code)
+        except Exception:  # noqa: BLE001
+            kod = str(r.status_code)
+        if "quota_exceeded" in str(kod):
+            kod = "kota-doldu"
+        return None, f"ElevenLabs {kod}: {r.text[:100]}"
+    data = r.content
+    if len(data) < 200:
+        return None, "ElevenLabs boş ses döndü"
+    return data, None
+
+
 def _gemini_tts(metin, voice, tarz_kisa):
     """Gemini 2.5 Flash TTS — insan-yakın ses. PCM24k -> MP3 (imageio-ffmpeg)."""
     key = (os.environ.get("GEMINI_API_KEY") or "").strip()
@@ -679,6 +720,14 @@ def tts_ep():
         hiz = "-5%"
     t0 = time.time()
     data, kaynak, ilk_hata = None, None, None
+    klon_id = (os.environ.get("ELEVEN_KLON_ID") or "").strip()
+    if ses in ("klon", "sen") and klon_id and not kesin_edge:
+        data, ilk_hata = _eleven_tts(metin, klon_id, "eleven_multilingual_v2")
+        kaynak = "elevenlabs-klon" if data else "klon-başarısız"
+    if data is None and ses in ELEVEN_SES and not kesin_edge:
+        _vid, _mdl = ELEVEN_SES[ses]
+        data, ilk_hata = _eleven_tts(metin, _vid, _mdl)
+        kaynak = f"elevenlabs:{ses}" if data else "el-başarısız"
     gv = GEMINI_SES.get(ses)
     if gv and not kesin_edge:
         data, ilk_hata = _gemini_tts(metin, gv, tarz)
@@ -1248,9 +1297,9 @@ GET  /api/v1/arena/sonuc/{is_id}?key=sk-...  → asenkron iş durumu</pre>
 
 <div class="kart" style="border-color:#f472b655">
 <span class="yol">🗣️ TTS — Metin → Türkçe Ses MP3</span><span class="etiket get">GET</span>
-<p class="acik"><b>Gemini 2.5 Flash TTS</b> varsayılan: insan-yakın, duygulu ses (ChatGPT sesi hissi). Sesler: <code>kadin, erkek, neseli, ciddi, derin</code> (+ zephyr/puck/kore/charon ham isimler). Tarz: <code>tarz=sicak|neseli|ciddi|sakin</code>. Kota dolarsa otomatik <b>Edge yedek</b> (sınırsız). <code>ses=emel--edge</code> ile Edge zorlanır.</p>
-<pre>GET /api/v1/tts?metin=merhaba dünya&ses=kadin&tarz=sicak&mod=indir&key=sk-...
-→ audio/mpeg akışı (X-TTS-Kaynak başlığı: gemini | edge-yedek)</pre>
+<p class="acik"><b>Zincir:</b> ElevenLabs (aylık 10K karakter bedava, en doğal) → <b>Gemini 2.5</b> (günlük kota) → <b>Edge</b> (sınırsız yedek).<br>ElevenLabs sesleri: <code>sarah, laura, roger, george, river, callum, harry</code> (<code>el, elkadin, elerkek</code> kısayolları) — <code>ses=charlie</code> ya da <code>ses=v3</code> ile <b>duygu etiketli</b> [laughs][whispers] okuyan eleven_v3.<br>Gemini: <code>kadin|erkek|neseli|ciddi|derin</code> + <code>tarz=sicak|neseli|ciddi|sakin</code>. Edge için <code>ses=emel</code>/<code>ahmet</code> ya da her sona <code>--edge</code>.<br><code>ses=klon</code> → kendi klonun (ELEVEN_KLON_ID env ile, Creator plan gerekir).</p>
+<pre>GET /api/v1/tts?metin=merhaba&ses=sarah&mod=indir&key=sk-...
+→ audio/mpeg akışı (X-TTS-Kaynak: elevenlabs:* | gemini | edge-yedek)</pre>
 </div>
 
 <div class="kart" style="border-color:#fbbf2455">
