@@ -562,6 +562,175 @@ def kapak_ep():
 
 
 
+
+
+
+# ============================ KLON SES ÜRETİMİ (GitHub Actions botu) ============================
+import uuid as _uuid
+import zipfile as _zipfile
+import io as _io2
+
+KLON_ISLER = {}                     # job_id -> kayıt (RAM; 1 saat sonra bytes linten temizlenir)
+KLON_REPO = os.environ.get("KLON_REPO", "kcbyk/klon-botu")
+KLON_REF_TEXT = (os.environ.get("KLON_REF_TEXT") or "").strip()
+
+
+def _gh_pati():
+    return (os.environ.get("GH_PAT") or os.environ.get("GITHUB_TOKEN") or "").strip()
+
+
+def _gh_h():
+    return {"Authorization": f"Bearer {_gh_pati()}", "Accept": "application/vnd.github+json"}
+
+
+def _gh(url, metod="GET", js=None, stream=False):
+    return _rq.request(metod, f"https://api.github.com/repos/{KLON_REPO}/{url}",
+                       headers=_gh_h(), json=js, timeout=25, stream=stream, allow_redirects=True)
+
+
+def _klon_run_bul(dispatch_ts, deneme=36):
+    """Dispatch sonrası oluşan ilk yeni run'u bul."""
+    wf = os.environ.get("KLON_WORKFLOW_ID", "360586790") or "360586790"
+    for _ in range(deneme):
+        d = _gh(f"actions/workflows/{wf}/runs?per_page=3").json()
+        runs = d.get("workflow_runs", [])
+        for r in runs:
+            # dispatch ~0-120sn önce oluşmuş
+            try:
+                from datetime import datetime, timezone
+                ct = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")).timestamp()
+                if ct >= dispatch_ts - 10:
+                    return r["id"]
+            except Exception:
+                pass
+        time.sleep(5)
+    return None
+
+
+def _klon_izle(j):
+    kayit = KLON_ISLER.get(j)
+    if not kayit:
+        return
+    if not _gh_pati():
+        kayit.update({"durum": "hata", "hata": "GitHub token eksik (GH_PAT/GITHUB_TOKEN)"})
+        return
+    rid = _klon_run_bul(kayit["dispatch_ts"])
+    if not rid:
+        kayit.update({"durum": "hata", "hata": "workflow run tespit edilemedi"})
+        return
+    kayit.update({"run_id": rid, "durum": "kuyrukta"})
+    # run poll (maks ~20dk, GH cache ile 3-6dk)
+    for _ in range(120):
+        d = _gh(f"actions/runs/{rid}", js=None).json() if False else _gh(f"actions/runs/{rid}").json()
+        st = d.get("status")
+        if st == "in_progress":
+            kayit["durum"] = "uretiliyor"
+        elif st == "completed":
+            if d.get("conclusion") != "success":
+                kayit.update({"durum": "hata", "hata": f"runner: {d.get('conclusion')}"})
+                return
+            arts = _gh(f"actions/runs/{rid}/artifacts").json().get("artifacts", [])
+            if not arts:
+                kayit.update({"durum": "hata", "hata": "artifact yok"})
+                return
+            aid = arts[0]["id"]
+            r = _gh(f"actions/artifacts/{aid}/zip", stream=True)
+            zf = _zipfile.ZipFile(_io2.BytesIO(r.content))
+            wav = next((zf.read(n) for n in zf.namelist() if n.endswith(".wav")), None)
+            if not wav:
+                kayit.update({"durum": "hata", "hata": "artifact içinde wav yok"})
+                return
+            # mp3'e çevir (site ffmpeg via imageio-ffmpeg)
+            mp3 = wav
+            uzanti = "wav"
+            try:
+                import subprocess as _sp
+                from imageio_ffmpeg import get_ffmpeg_exe
+                p = _sp.run([get_ffmpeg_exe(), "-y", "-f", "wav", "-i", "pipe:0",
+                             "-codec:a", "libmp3lame", "-q:a", "4", "-f", "mp3", "pipe:1"],
+                            input=wav, capture_output=True, timeout=60)
+                if p.returncode == 0 and len(p.stdout) > 500:
+                    mp3, uzanti = p.stdout, "mp3"
+            except Exception:
+                pass
+            kayit.update({"durum": "hazir", "bytes": mp3, "uzanti": uzanti, "bayt": len(mp3),
+                          "bitis": time.time()})
+            return
+        time.sleep(10)
+    kayit.update({"durum": "hata", "hata": "20dk zaman aşımı"})
+
+
+@app.get("/api/v1/klon-uret")
+@korumali
+def klon_uret():
+    """Kendi sesinle klon üret (senin ses kaydını hf-klon-botu ile üretir).
+    ?metin=...&hiz=1.0 → job id döner; /api/v1/klon-durum?j= ile takip et (2-6dk üretim)."""
+    metin = (request.args.get("metin") or "").strip()
+    hiz = (request.args.get("hiz") or "1.0").strip()
+    if not metin:
+        return _hata("metin parametresi gerekli (?metin=...)", 400)
+    if len(metin) > 400:
+        return _hata("tek seferde en fazla 400 karakter", 400)
+    if not KLON_REF_TEXT:
+        return _hata("KLON_REF_TEXT tanımsız (Render env'ine referans transkripti ekle)", 503)
+    if not _gh_pati():
+        return _hata("GitHub token eksik", 503)
+    try:
+        float(hiz)
+    except Exception:
+        hiz = "1.0"
+    # key başına max 1 aktif iş
+    for _, k in KLON_ISLER.items():
+        if k.get("anahtar") == getattr(g, "key_h", "-") and k.get("durum") not in ("hazir", "hata"):
+            return _hata("Zaten aktif bir klon işin var — bitince yenisi, takip: /api/v1/klon-durum?j=...", 429)
+    rts = {"metin": metin, "ref_text": KLON_REF_TEXT, "hiz": hiz, "kontrol": "5"}
+    wf = os.environ.get("KLON_WORKFLOW_ID", "360586790") or "360586790"
+    r = _gh(f"actions/workflows/{wf}/dispatches", metod="POST", js={"ref": "main", "inputs": rts})
+    if r.status_code != 204:
+        return _hata(f"GitHub dispatch başarısız: {r.status_code} {r.text[:120]}", 502)
+    j = secrets.token_hex(4)
+    KLON_ISLER[j] = {"anahtar": (request.args.get("key") or "x")[-6:], "durum": "gonderildi",
+                     "dispatch_ts": time.time(), "metin": metin, "baslangic": time.time()}
+    threading.Thread(target=_klon_izle, args=(j,), daemon=True).start()
+    return jsonify(ok=True, job=j)
+
+
+@app.get("/api/v1/klon-durum")
+@korumali
+def klon_durum():
+    """Klon işi durumu. ?j=<job_id>"""
+    j = (request.args.get("j") or "").strip()
+    k = KLON_ISLER.get(j)
+    if not k:
+        return _hata("iş bulunamadı", 404)
+    cev = {"ok": True, "durum": k.get("durum"), "metin": k.get("metin")}
+    if k.get("durum") == "hazir":
+        cev.update({"indir": f"/api/v1/klon-dosya?j={j}&key=...", "bayt": k.get("bayt"),
+                    "gecen_sn": round(k.get("bitis", 0) - k.get("baslangic", 0))})
+    elif k.get("durum") == "hata":
+        cev["hata"] = k.get("hata")
+    else:
+        cev["gecen_sn"] = round(time.time() - k.get("baslangic", time.time()))
+    return jsonify(cev)
+
+
+@app.get("/api/v1/klon-dosya")
+@korumali
+def klon_dosya():
+    """Hazır klon sesi (wav/mp3 akışı). ?j=<job_id>"""
+    j = (request.args.get("j") or "").strip()
+    k = KLON_ISLER.get(j)
+    if not k or k.get("durum") != "hazir" or not k.get("bytes"):
+        return _hata("hazır dosya yok (klon-durum ile takip et)", 404)
+    data = k["bytes"]
+    uzanti = k.get("uzanti", "wav")
+    mt = "audio/mpeg" if uzanti == "mp3" else "audio/wav"
+    rx = send_file(_io2.BytesIO(data), mimetype=mt, as_attachment=False,
+                   download_name=f"klon-{j}.{uzanti}")
+    return rx
+
+
+
 # ============================ YENİ ÖZELLİKLER (2026-09-17) ============================
 CF_API_BASE = "https://api.cloudflare.com"
 
@@ -1316,6 +1485,14 @@ POST /api/v1/transkript  {"url":"https://site.com/ses.mp3"}
 <pre>GET /api/v1/sohbet?mesaj=merhaba&model=glm&key=sk-...
 POST /api/v1/sohbet  {"mesaj":"2+2 kaç?","model":"micro"}
 → {"ok":true,"cevap":"..."}</pre>
+</div>
+
+<div class="kart" style="border-color:#22d3ee55">
+<span class="yol">🎤 Klon — Senin Sesinle Üret (asenkron)</span><span class="etiket get">GET</span>
+<p class="acik">Kaydedilmiş gerçek sesinizi zero-shot klonlayan XTTS-v2; GitHub Actions botunda ücretsiz/sınırsız üretim. Süre ~2-6 dakika: <code>klon-uret</code> iş başlatır → <code>klon-durum</code> izler → <code>klon-dosya</code> mp3/wav verir. Key başına 1 aktif iş, metin ≤400 karakter.</p>
+<pre>1) GET /api/v1/klon-uret?metin=selam dunya&hiz=1.0&key=sk-... → {"ok":true,"job":"abc123"}
+2) GET /api/v1/klon-durum?j=abc123&key=sk-...  → durum: gonderildi→kuyruktaydi→uretiliyor→hazir
+3) GET /api/v1/klon-dosya?j=abc123&key=sk-...  → audio/mpeg akışı</pre>
 </div>
 
 <footer>🎵 Şarkı API v2.0 — key yönetimi + kalıcı depolama • Kişisel kullanım</footer>
