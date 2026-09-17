@@ -560,6 +560,145 @@ def kapak_ep():
     return jsonify(ok=True, q=q, **veri)
 
 
+
+# ============================ YENİ ÖZELLİKLER (2026-09-17) ============================
+CF_API_BASE = "https://api.cloudflare.com"
+
+
+def _cf_env():
+    return (os.environ.get("CF_ACCOUNT_ID") or "").strip(), (os.environ.get("CF_API_TOKEN") or "").strip()
+
+
+def _cf_run(model, govde, timeout=150):
+    """Cloudflare Workers AI çağrısı → (result_dict, hata|None)"""
+    acc, tok = _cf_env()
+    if not (acc and tok):
+        return None, "CF_ACCOUNT_ID / CF_API_TOKEN tanımsız (Render env)"
+    try:
+        r = _rq.post(f"{CF_API_BASE}/client/v4/accounts/{acc}/ai/run/{model}",
+                     headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+                     json=govde, timeout=timeout)
+    except Exception as e:  # noqa: BLE001
+        return None, f"Cloudflare'a ulaşılamadı: {e}"
+    if not r.ok:
+        return None, f"Cloudflare HTTP {r.status_code}: {r.text[:160]}"
+    d = r.json()
+    if d.get("success") is False:
+        return None, ((d.get("errors") or [{}])[0].get("message") or "cf hatası")[:200]
+    return (d.get("result") or {}), None
+
+
+@app.get("/api/v1/tts")
+@korumali
+def tts_ep():
+    """Metin → Türkçe konuşma MP3 (Microsoft Edge neural sesler, tamamen ücretsiz).
+    ?metin=...&ses=emel|ahmet&hiz=-5%&mod=indir|json"""
+    metin = (request.args.get("metin") or "").strip()
+    ses = (request.args.get("ses") or "emel").strip().lower()
+    hiz = (request.args.get("hiz") or "-5%").strip()
+    mod = (request.args.get("mod") or "indir").strip().lower()
+    if not metin:
+        return _hata("metin parametresi gerekli (?metin=merhaba)", 400)
+    if len(metin) > 800:
+        return _hata("metin en fazla 800 karakter olabilir", 400)
+    sesmap = {"emel": "tr-TR-EmelNeural", "kadin": "tr-TR-EmelNeural",
+              "ahmet": "tr-TR-AhmetNeural", "erkek": "tr-TR-AhmetNeural"}
+    voice = sesmap.get(ses, "tr-TR-EmelNeural")
+    try:
+        import asyncio
+        import io as _io
+        import re as _re
+        import edge_tts  # noqa: PLC0415
+    except ImportError:
+        return _hata("edge-tts yüklü değil (requirements.txt'e eklenmeli)", 503)
+    if not _re.match(r'^[+-]?\d{1,2}%$', hiz):
+        hiz = "-5%"
+    t0 = time.time()
+    buf = _io.BytesIO()
+
+    async def _sentez():
+        tts = edge_tts.Communicate(metin, voice, rate=hiz)
+        async for ch in tts.stream():
+            if ch["type"] == "audio":
+                buf.write(ch["data"])
+
+    try:
+        asyncio.run(_sentez())
+    except Exception as e:  # noqa: BLE001
+        return _hata(f"TTS sentezi başarısız: {e}", 502)
+    data = buf.getvalue()
+    if len(data) < 200:
+        return _hata("TTS ses üretemedi (boş çıktı)", 502)
+    sure = int((time.time() - t0) * 1000)
+    if mod == "json":
+        return jsonify(ok=True, metin=metin, ses=voice, hiz=hiz, bayt=len(data),
+                       sure_ms=sure, base64_mp3=base64.b64encode(data).decode())
+    return send_file(_io.BytesIO(data), mimetype="audio/mpeg", as_attachment=False,
+                     download_name="tts.mp3")
+
+
+@app.route("/api/v1/transkript", methods=["GET", "POST"])
+@korumali
+def transkript_ep():
+    """Ses dosyası linki → metin (Cloudflare Whisper, kelime zamanlamalı).
+    GET ?url=https://.../ses.mp3  veya  POST {"url": "..."}"""
+    d = request.get_json(silent=True) or {}
+    url = (request.args.get("url") or d.get("url") or "").strip()
+    if not url:
+        return _hata("url parametresi gerekli (doğrudan ses dosyası linki, mp3/wav/ogg)", 400)
+    if not re.match(r'^https?://', url, flags=re.I):
+        return _hata("url http(s) ile başlamalı", 400)
+    try:
+        r = _rq.get(url, timeout=45)
+        r.raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        return _hata(f"Ses indirilemedi: {e}", 502)
+    data = r.content
+    if len(data) < 200:
+        return _hata("İçerik çok küçük — gerçek ses dosyası değil gibi", 400)
+    if len(data) > 20 * 1024 * 1024:
+        return _hata("Ses dosyası 20MB sınırını aşıyor", 400)
+    t0 = time.time()
+    # CF whisper: {"audio": [bayt listesi]} — kelime zamanlamaları döner
+    res, hata = _cf_run("@cf/openai/whisper", {"audio": list(data)}, 150)
+    if hata:
+        return _hata(f"whisper: {hata}", 502)
+    metin = (res.get("text") or "").strip()
+    return jsonify(ok=True, metin=metin, karakter=len(metin),
+                   kelime_zamanli=bool(res.get("words")), sure_ms=int((time.time() - t0) * 1000),
+                   kaynak="cf-whisper")
+
+
+@app.route("/api/v1/sohbet", methods=["GET", "POST"])
+@korumali
+def sohbet_ep():
+    """Ücretsiz LLM sohbeti (Cloudflare: GLM-4.7 / Llama-3.1; günlük 10K neuron bedava).
+    GET ?mesaj=...&model=glm|llama|micro  veya  POST {"mesaj": "...", "model": "glm"}"""
+    d = request.get_json(silent=True) or {}
+    mesaj = (request.args.get("mesaj") or d.get("mesaj") or "").strip()
+    model = (request.args.get("model") or d.get("model") or "glm").strip().lower()
+    if not mesaj:
+        return _hata("mesaj parametresi gerekli", 400)
+    if len(mesaj) > 4000:
+        return _hata("mesaj en fazla 4000 karakter", 400)
+    M = {"glm": "@cf/zai-org/glm-4.7-flash",
+         "llama": "@cf/meta/llama-3.1-8b-instruct-fp8",
+         "micro": "@cf/ibm-granite/granite-4.0-h-micro"}
+    mdl = M.get(model, M["glm"])
+    t0 = time.time()
+    res, hata = _cf_run(mdl, {"messages": [
+        {"role": "system", "content": "Kısa, samimi, Türkçe konuşan yardımcı bir asistansın. Cevabın 3 paragrafı geçmesin."},
+        {"role": "user", "content": mesaj}]}, 90)
+    if hata:
+        return _hata(f"llm: {hata}", 502)
+    cevap = None
+    if isinstance(res.get("response"), str):
+        cevap = res["response"]
+    elif res.get("choices"):
+        cevap = ((res["choices"][0] or {}).get("message") or {}).get("content")
+    return jsonify(ok=True, model=mdl, cevap=cevap, sure_ms=int((time.time() - t0) * 1000))
+
+
 @app.get("/api/v1/oku")
 @korumali
 def oku_ep():
@@ -740,6 +879,29 @@ footer a{color:#5d6784}
   <pre id="ornek2"></pre>
   <pre id="ornek3"></pre>
 </details>
+
+<div class="kart" style="border-color:#f472b655">
+<span class="yol">🗣️ TTS — Metin → Türkçe Ses MP3</span><span class="etiket get">GET</span>
+<p class="acik">Tamamen ücretsiz Microsoft Edge neural sesler: Emel (kadın) ve Ahmet (erkek). İstek anında MP3 akışı döner, sınırsız.</p>
+<pre>GET /api/v1/tts?metin=merhaba dünya&ses=emel&hiz=-10%&mod=indir&key=sk-...
+→ audio/mpeg akışı (mod=json olursa base64_mp3 + süre bilgisi)</pre>
+</div>
+
+<div class="kart" style="border-color:#fbbf2455">
+<span class="yol">✍️ Transkript — Ses → Metin</span><span class="etiket get">GET</span><span class="etiket post">POST</span>
+<p class="acik">Cloudflare Whisper ile konuşmayı metne çöz. Doğrudan ses dosyası linki ver (mp3/wav/ogg, &le;20MB); kelime zamanlaması destekli.</p>
+<pre>GET /api/v1/transkript?url=https://site.com/ses.mp3&key=sk-...
+POST /api/v1/transkript  {"url":"https://site.com/ses.mp3"}
+→ {"ok":true,"metin":"...","kelime_zamanli":true}</pre>
+</div>
+
+<div class="kart" style="border-color:#a78bfa55">
+<span class="yol">🧠 Sohbet — Ücretsiz LLM</span><span class="etiket get">GET</span><span class="etiket post">POST</span>
+<p class="acik">Cloudflare'da ücretli-tier GLM-4.7-flash; takas modelleri: <code>llama</code> (Meta 8B), <code>micro</code> (ultra hız). Gündelik kota bol (10K neuron/gün herkese bedava).</p>
+<pre>GET /api/v1/sohbet?mesaj=merhaba&model=glm&key=sk-...
+POST /api/v1/sohbet  {"mesaj":"2+2 kaç?","model":"micro"}
+→ {"ok":true,"cevap":"..."}</pre>
+</div>
 
 <footer>🎵 Şarkı API v2.0 • <a href="/dokuman">detaylı dokümantasyon</a> • Render + GitHub backed</footer>
 </div>
