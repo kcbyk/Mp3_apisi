@@ -589,32 +589,58 @@ def _cf_run(model, govde, timeout=150):
     return (d.get("result") or {}), None
 
 
-@app.get("/api/v1/tts")
-@korumali
-def tts_ep():
-    """Metin → Türkçe konuşma MP3 (Microsoft Edge neural sesler, tamamen ücretsiz).
-    ?metin=...&ses=emel|ahmet&hiz=-5%&mod=indir|json"""
-    metin = (request.args.get("metin") or "").strip()
-    ses = (request.args.get("ses") or "emel").strip().lower()
-    hiz = (request.args.get("hiz") or "-5%").strip()
-    mod = (request.args.get("mod") or "indir").strip().lower()
-    if not metin:
-        return _hata("metin parametresi gerekli (?metin=merhaba)", 400)
-    if len(metin) > 800:
-        return _hata("metin en fazla 800 karakter olabilir", 400)
-    sesmap = {"emel": "tr-TR-EmelNeural", "kadin": "tr-TR-EmelNeural",
-              "ahmet": "tr-TR-AhmetNeural", "erkek": "tr-TR-AhmetNeural"}
-    voice = sesmap.get(ses, "tr-TR-EmelNeural")
+GEMINI_SES = {"zephyr": "Zephyr", "kadin": "Zephyr", "kız": "Zephyr", "gemini": "Zephyr",
+              "erkek": "Charon", "charon": "Charon", "neseli": "Puck", "puck": "Puck",
+              "ciddi": "Kore", "kore": "Kore", "derin": "Fenrir", "fenrir": "Fenrir",
+              "aoede": "Aoede"}
+GEMINI_TARZ = {"sicak": "Sıcak ve samimi, doğal bir arkadaş gibi rahat ve insan gibi konuş",
+               "neseli": "Neşeli ve enerjik, gülümseyerek, canlı bir ses tonuyla konuş",
+               "ciddi": "Ciddi, sakin ve güvenilir bir spiker tonuyla konuş",
+               "sakin": "Yumuşak, rahatlatıcı ve sakin bir sesle konuş"}
+
+
+def _gemini_tts(metin, voice, tarz_kisa):
+    """Gemini 2.5 Flash TTS — insan-yakın ses. PCM24k -> MP3 (imageio-ffmpeg)."""
+    key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+    if not key:
+        return None, "GEMINI_API_KEY tanımsız"
+    tarz = GEMINI_TARZ.get(tarz_kisa, GEMINI_TARZ["sicak"])
+    govde = {"contents": [{"parts": [{"text": f"{tarz}: {metin}"}]}],
+             "generationConfig": {"responseModalities": ["AUDIO"],
+                                  "speechConfig": {"voiceConfig":
+                                                   {"prebuiltVoiceConfig": {"voiceName": voice}}}}}
+    try:
+        r = _rq.post("https://generativelanguage.googleapis.com/v1beta/models/"
+                     "gemini-2.5-flash-preview-tts:generateContent?key=" + key,
+                     json=govde, timeout=90)
+    except Exception as e:  # noqa: BLE001
+        return None, f"Gemini'e ulaşılamadı: {e}"
+    if not r.ok:
+        return None, f"Gemini HTTP {r.status_code}: {r.text[:120]}"
+    d = r.json()
+    parca = ((d.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [{}]
+    inl = parca[0].get("inlineData") or parca[0].get("inline_data") or {}
+    ham = base64.b64decode(inl.get("data") or "")
+    if not ham:
+        return None, "Gemini ses üretmedi"
+    import subprocess
+    from imageio_ffmpeg import get_ffmpeg_exe
+    prc = subprocess.run([get_ffmpeg_exe(), "-y", "-f", "s16le", "-ar", "24000", "-ac", "1",
+                          "-i", "pipe:0", "-codec:a", "libmp3lame", "-q:a", "3",
+                          "-f", "mp3", "pipe:1"], input=ham, capture_output=True, timeout=60)
+    if prc.returncode != 0 or len(prc.stdout) < 200:
+        return None, "ffmpeg dönüştürmesi başarısız"
+    return prc.stdout, None
+
+
+def _edge_tts(metin, voice, hiz):
+    """Edge neural (yedek). -> (mp3_bayt, hata|None)"""
     try:
         import asyncio
         import io as _io
-        import re as _re
         import edge_tts  # noqa: PLC0415
     except ImportError:
-        return _hata("edge-tts yüklü değil (requirements.txt'e eklenmeli)", 503)
-    if not _re.match(r'^[+-]?\d{1,2}%$', hiz):
-        hiz = "-5%"
-    t0 = time.time()
+        return None, "edge-tts yüklü değil"
     buf = _io.BytesIO()
 
     async def _sentez():
@@ -622,21 +648,56 @@ def tts_ep():
         async for ch in tts.stream():
             if ch["type"] == "audio":
                 buf.write(ch["data"])
-
     try:
         asyncio.run(_sentez())
     except Exception as e:  # noqa: BLE001
-        return _hata(f"TTS sentezi başarısız: {e}", 502)
+        return None, f"Edge TTS: {e}"
     data = buf.getvalue()
-    if len(data) < 200:
-        return _hata("TTS ses üretemedi (boş çıktı)", 502)
+    return (data, None) if len(data) > 200 else (None, "Edge ses üretemedi")
+
+
+@app.get("/api/v1/tts")
+@korumali
+def tts_ep():
+    """Metin -> Türkçe konuşma MP3.
+    Birincil: Gemini 2.5 Flash TTS (insan-yakın, tarz yönlendirmeli; GEMINI_API_KEY gerekir)
+    Yedek: edge-tts (kotasiz, Emel/Ahmet).
+    ?metin=...&ses=gemini|kadin|erkek|neseli|ciddi|derin|ahmet|emel ve --edge (zorla Edge)
+    &tarz=sicak|neseli|ciddi|sakin&hiz=-5%&mod=indir|json"""
+    metin = (request.args.get("metin") or "").strip()
+    ses = (request.args.get("ses") or "gemini").strip().lower()
+    tarz = (request.args.get("tarz") or "sicak").strip().lower()
+    hiz = (request.args.get("hiz") or "-5%").strip()
+    mod = (request.args.get("mod") or "indir").strip().lower()
+    kesin_edge = "--edge" in ses
+    ses = ses.replace("--edge", "")
+    if not metin:
+        return _hata("metin parametresi gerekli (?metin=merhaba)", 400)
+    if len(metin) > 800:
+        return _hata("metin en fazla 800 karakter olabilir", 400)
+    if not re.match(r'^[+-]?\d{1,2}%$', hiz):
+        hiz = "-5%"
+    t0 = time.time()
+    data, kaynak, ilk_hata = None, None, None
+    gv = GEMINI_SES.get(ses)
+    if gv and not kesin_edge:
+        data, ilk_hata = _gemini_tts(metin, gv, tarz)
+        kaynak = "gemini" if data else f"gemini-başarısız"
+    if data is None:
+        evoice = ("tr-TR-AhmetNeural" if ses == "ahmet" else "tr-TR-EmelNeural")
+        data, ilk_hata = _edge_tts(metin, evoice, hiz)
+        kaynak = "edge-yedek"
+    if data is None:
+        return _hata(f"TTS üretilemedi: {ilk_hata}", 502)
     sure = int((time.time() - t0) * 1000)
     if mod == "json":
-        return jsonify(ok=True, metin=metin, ses=voice, hiz=hiz, bayt=len(data),
-                       sure_ms=sure, base64_mp3=base64.b64encode(data).decode())
-    return send_file(_io.BytesIO(data), mimetype="audio/mpeg", as_attachment=False,
-                     download_name="tts.mp3")
-
+        return jsonify(ok=True, metin=metin, ses=(gv or ses), tarz=tarz, bayt=len(data),
+                       sure_ms=sure, kaynak=kaynak, base64_mp3=base64.b64encode(data).decode())
+    import io as _io
+    rx = send_file(_io.BytesIO(data), mimetype="audio/mpeg", as_attachment=False,
+                   download_name="tts.mp3")
+    rx.headers["X-TTS-Kaynak"] = kaynak
+    return rx
 
 @app.route("/api/v1/transkript", methods=["GET", "POST"])
 @korumali
@@ -1187,9 +1248,9 @@ GET  /api/v1/arena/sonuc/{is_id}?key=sk-...  → asenkron iş durumu</pre>
 
 <div class="kart" style="border-color:#f472b655">
 <span class="yol">🗣️ TTS — Metin → Türkçe Ses MP3</span><span class="etiket get">GET</span>
-<p class="acik">Tamamen ücretsiz Microsoft Edge neural sesler: Emel (kadın) ve Ahmet (erkek). İstek anında MP3 akışı döner, sınırsız.</p>
-<pre>GET /api/v1/tts?metin=merhaba dünya&ses=emel&hiz=-10%&mod=indir&key=sk-...
-→ audio/mpeg akışı (mod=json olursa base64_mp3 + süre bilgisi)</pre>
+<p class="acik"><b>Gemini 2.5 Flash TTS</b> varsayılan: insan-yakın, duygulu ses (ChatGPT sesi hissi). Sesler: <code>kadin, erkek, neseli, ciddi, derin</code> (+ zephyr/puck/kore/charon ham isimler). Tarz: <code>tarz=sicak|neseli|ciddi|sakin</code>. Kota dolarsa otomatik <b>Edge yedek</b> (sınırsız). <code>ses=emel--edge</code> ile Edge zorlanır.</p>
+<pre>GET /api/v1/tts?metin=merhaba dünya&ses=kadin&tarz=sicak&mod=indir&key=sk-...
+→ audio/mpeg akışı (X-TTS-Kaynak başlığı: gemini | edge-yedek)</pre>
 </div>
 
 <div class="kart" style="border-color:#fbbf2455">
