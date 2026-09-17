@@ -5,8 +5,8 @@
    "youtube"
   ],
   "olusturma": "2026-08-30 08:50",
-  "kullanim": 51,
-  "son_kullanim": "2026-09-09 02:53"
+  "kullanim": 79,
+  "son_kullanim": "2026-09-17 22:14"
  },
  "sk-71c69f4de1f4b912957fed45": {
   "isim": "savio",
@@ -41,6 +41,15 @@
    "arena"
   ],
   "olusturma": "2026-09-16 04:10",
+  "kullanim": 0,
+  "son_kullanim": null
+ },
+ "sk-219f43f29468ca387a616dba": {
+  "isim": "Se",
+  "saglayicilar": [
+   "tumu"
+  ],
+  "olusturma": "2026-09-17 23:22",
   "kullanim": 0,
   "son_kullanim": null
  }
