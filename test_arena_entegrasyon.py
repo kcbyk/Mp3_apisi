@@ -83,7 +83,7 @@ test("Görsel URL'i döndü", bool(d.get("gorsel_url")), str(d.get("gorsel_url")
 test("Türkçe karakterler korundu (UTF-8)", "köpek balığı" in d.get("prompt", ""), d.get("prompt", "")[:40])
 test("gorunum_url (img src) üretildi", "/api/v1/arena/gorsel?" in (d.get("gorunum_url") or "") and "mod=indir" in (d.get("gorunum_url") or ""))
 # 6b) Yeni (2026-09-16): sağlayıcı bilgisi yanıtta görünür — auto zinciri birini seçer
-test("Sağlayıcı alanı (auto → kazanan) yanıtta", d.get("saglayici") in ("pollinations", "ovh", "arena"),
+test("Sağlayıcı alanı (auto → kazanan) yanıtta", d.get("saglayici") in ("pollinations", "ovh", "cloudflare", "arena"),
      f"saglayici={d.get('saglayici')}")
 
 # 6c) İstek bazlı sağlayıcı seçimi: ovh zorlanır

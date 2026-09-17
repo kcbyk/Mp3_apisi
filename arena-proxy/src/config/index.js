@@ -157,6 +157,13 @@ const schema = z.object({
   // Yedek sağlayıcı: OVHcloud AI Endpoints — anon erişimli ücretsiz SDXL (kayıt yok, kart yok).
   // Ana anahtar kotaları dolunca "auto" zinciri buraya düşer.
   OVH_BASE_URL: str('https://oai.endpoints.kepler.ai.cloud.ovh.net'),
+  CF_BASE_URL: str('https://api.cloudflare.com'),
+  CF_ACCOUNT_ID: str(''),
+  CF_API_TOKEN: str(''),
+  CF_MODEL: str('@cf/black-forest-labs/flux-1-schnell'),
+  CF_STEPS: num(4),              // flux-1-schnell maks 8; 4 = hız+kalite dengesi (~1.4sn canlı)
+  CF_TIMEOUT_MS: num(60_000),    // edge GPU hızlı; yine de ağ toleransı
+
   OVH_MODEL: str('stable-diffusion-xl-base-v10'),
   OVH_TOKEN: str(''),           // opsiyonel: ücretsiz OVH hesabıyla rate-limit artar
   OVH_TIMEOUT_MS: num(120_000),
@@ -300,7 +307,7 @@ export const config = {
     deleteAfterMs: env.DELETE_ARTIFACT_AFTER_MS,
   },
   imageProvider: {
-    name: ['arena', 'pollinations', 'ovh', 'auto'].includes(env.IMAGE_PROVIDER) ? env.IMAGE_PROVIDER : 'arena',
+    name: ['arena', 'pollinations', 'ovh', 'cloudflare', 'auto'].includes(env.IMAGE_PROVIDER) ? env.IMAGE_PROVIDER : 'arena',
     baseUrl: env.POLLINATIONS_BASE_URL.replace(/\/+$/, ''),
     genBaseUrl: env.POLLINATIONS_GEN_BASE_URL.replace(/\/+$/, ''),
     model: env.POLLINATIONS_MODEL,
@@ -312,6 +319,14 @@ export const config = {
     model: env.OVH_MODEL,
     token: env.OVH_TOKEN || null,
     timeoutMs: env.OVH_TIMEOUT_MS,
+  },
+  cloudflare: {
+    baseUrl: env.CF_BASE_URL.replace(/\/+$/, ''),
+    accountId: env.CF_ACCOUNT_ID || null,
+    token: env.CF_API_TOKEN || null,
+    model: env.CF_MODEL,
+    steps: Math.max(1, Math.min(8, env.CF_STEPS)),
+    timeoutMs: env.CF_TIMEOUT_MS,
   },
 };
 

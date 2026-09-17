@@ -11,11 +11,12 @@ import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 import { pollinationsGenerate } from '../scrapers/directPollinations.js';
 import { ovhGenerate } from '../scrapers/directOvh.js';
+import { cloudflareGenerate } from '../scrapers/directCloudflare.js';
 
 const log = logger.child({ mod: 'imageChain' });
 
 /** Oturum gerektirmeyen sağlayıcılar — readiness'te session_file kuralı atlanır */
-export const BROWSERLESS_PROVIDERS = new Set(['pollinations', 'ovh', 'auto']);
+export const BROWSERLESS_PROVIDERS = new Set(['pollinations', 'ovh', 'cloudflare', 'auto']);
 
 export function zincirKur() {
   const anonPol = {
@@ -23,14 +24,18 @@ export function zincirKur() {
     g: (p, o) => pollinationsGenerate(p, { ...o, cfgOverride: { ...config.imageProvider, token: null } }),
   };
   const ovh = { name: 'ovh', g: (p, o) => ovhGenerate(p, o) };
+  const cf = config.cloudflare.token && config.cloudflare.accountId
+    ? [{ name: 'cloudflare', g: (p, o) => cloudflareGenerate(p, o) }]
+    : [];
   if (config.imageProvider.token) {
     return [
       { name: 'pollinations', g: (p, o) => pollinationsGenerate(p, o) },
+      ...cf,
       ovh,
       anonPol,
     ];
   }
-  return [ovh, anonPol];
+  return [...cf, ovh, anonPol];
 }
 
 /**

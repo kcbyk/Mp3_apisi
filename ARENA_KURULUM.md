@@ -528,6 +528,21 @@ Kotaya takılmamak için sağlayıcı sayısı ikiye çıktı ve hepsi tek çat�
 - 401-in-canlı-test notu: bogus seed anahtarı → zincir `pollinations:401 → ovh:basarili`
   ile OVH'den döndü; gerçek çıktı /tmp'de 1.2MB PNG olarak görüldü.
 
+## 16) Cloudflare Workers AI halkası (2026-09-17)
+
+Ücretsiz katmanın kral taze keşfi: **her hesaba günlük 10.000 Neuron** (kalıcı, kart yok).
+
+- `@cf/black-forest-labs/flux-1-schnell` 1024×1024 = 57.6 neuron → **~173 görsel/gün, ~1.4sn**
+  (kod yolundan canlı kanıt: sandbox'tan 2026-09-17, 2.1sn, 687KB JPEG).
+- API: `POST /client/v4/accounts/{ACCOUNT_ID}/ai/run/{MODEL}` Bearer; gövde yalnız `{prompt, steps}`
+  (width/height/num_steps 400 verir); çıktı base64 JSON `{result:{image}}`; `success:false` taşınır.
+- Gerekli env: `CF_API_TOKEN` + `CF_ACCOUNT_ID` (boşsa halka yok sayılır; doğrudan 'cloudflare'
+  seçiminde net hata).
+- Zincir: `pollinations(seed) → cloudflare → ovh → anon`. gpt-image-1-mini yine birinci
+  önceliğin kalır; kotası biterse ~1.4sn'/173gün CF ağı devralır. Ayrıca `saglayici=cloudflare`
+  doğrudan zorlanabilir.
+- Testler: +6 (base64 parse, size_note, env-yok, success:false, zincir sırası, config) = 36/36.
+
 ## 15) model passthrough + yeni varsayılan: gpt-image-1-mini (2026-09-16 gecesi)
 
 Bedava seed diliminde çalışan stüdyo kalitesi keşfedildi (canlı doğrulandı):

@@ -16,6 +16,7 @@ import { runGeneration, normalizeParams, loadSelectors } from '../scrapers/arena
 import { deliverArtifact } from '../scrapers/artifactDelivery.js';
 import { pollinationsGenerate } from '../scrapers/directPollinations.js';
 import { ovhGenerate } from '../scrapers/directOvh.js';
+import { cloudflareGenerate } from '../scrapers/directCloudflare.js';
 import { runImageChain, BROWSERLESS_PROVIDERS } from './imageChain.js';
 import { selectorReport } from '../utils/resilientSelector.js';
 import { AppError, SessionError, ValidationError } from '../errors.js';
@@ -111,7 +112,7 @@ export async function generateAsset(rawParams, { requestId = crypto.randomUUID()
   /*   - 'ovh'          : TARAYICISIZ OVHcloud SDXL yedeği               */
   /*   - 'auto'         : pollinations → ovh → pollinations-anon zinciri */
   /* ------------------------------------------------------------------ */
-  const provider = ['arena', 'pollinations', 'ovh', 'auto'].includes(rawParams?.provider)
+  const provider = ['arena', 'pollinations', 'ovh', 'cloudflare', 'auto'].includes(rawParams?.provider)
     ? rawParams.provider
     : config.imageProvider.name;
 
@@ -123,6 +124,8 @@ export async function generateAsset(rawParams, { requestId = crypto.randomUUID()
         pkg = await runImageChain(params, { taskId, delivery, onProgress });
       } else if (provider === 'ovh') {
         pkg = await ovhGenerate(params, { taskId, delivery, onProgress });
+      } else if (provider === 'cloudflare') {
+        pkg = await cloudflareGenerate(params, { taskId, delivery, onProgress });
       } else {
         pkg = await pollinationsGenerate(params, { taskId, delivery, onProgress });
       }

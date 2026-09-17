@@ -45,7 +45,7 @@ const generateSchema = z.object({
   callback_url: z.string().url().optional(),
   delivery: z.enum(['url', 'base64', 'file', 'both']).optional(),
   // İsteğe bağlı sağlayıcı override: verilmezse IMAGE_PROVIDER env varsayılanı kullanılır
-  provider: z.enum(['arena', 'pollinations', 'ovh', 'auto']).optional(),
+  provider: z.enum(['arena', 'pollinations', 'ovh', 'cloudflare', 'auto']).optional(),
   model: z.string().trim().min(1).max(160).optional(),
 }).strict();
 
