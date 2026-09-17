@@ -881,28 +881,7 @@ footer a{color:#5d6784}
   <pre id="ornek3"></pre>
 </details>
 
-<div class="kart" style="border-color:#f472b655">
-<span class="yol">🗣️ TTS — Metin → Türkçe Ses MP3</span><span class="etiket get">GET</span>
-<p class="acik">Tamamen ücretsiz Microsoft Edge neural sesler: Emel (kadın) ve Ahmet (erkek). İstek anında MP3 akışı döner, sınırsız.</p>
-<pre>GET /api/v1/tts?metin=merhaba dünya&ses=emel&hiz=-10%&mod=indir&key=sk-...
-→ audio/mpeg akışı (mod=json olursa base64_mp3 + süre bilgisi)</pre>
-</div>
 
-<div class="kart" style="border-color:#fbbf2455">
-<span class="yol">✍️ Transkript — Ses → Metin</span><span class="etiket get">GET</span><span class="etiket post">POST</span>
-<p class="acik">Cloudflare Whisper ile konuşmayı metne çöz. Doğrudan ses dosyası linki ver (mp3/wav/ogg, &le;20MB); kelime zamanlaması destekli.</p>
-<pre>GET /api/v1/transkript?url=https://site.com/ses.mp3&key=sk-...
-POST /api/v1/transkript  {"url":"https://site.com/ses.mp3"}
-→ {"ok":true,"metin":"...","kelime_zamanli":true}</pre>
-</div>
-
-<div class="kart" style="border-color:#a78bfa55">
-<span class="yol">🧠 Sohbet — Ücretsiz LLM</span><span class="etiket get">GET</span><span class="etiket post">POST</span>
-<p class="acik">Cloudflare'da ücretli-tier GLM-4.7-flash; takas modelleri: <code>llama</code> (Meta 8B), <code>micro</code> (ultra hız). Gündelik kota bol (10K neuron/gün herkese bedava).</p>
-<pre>GET /api/v1/sohbet?mesaj=merhaba&model=glm&key=sk-...
-POST /api/v1/sohbet  {"mesaj":"2+2 kaç?","model":"micro"}
-→ {"ok":true,"cevap":"..."}</pre>
-</div>
 
 <footer>🎵 Şarkı API v2.0 • <a href="/dokuman">detaylı dokümantasyon</a> • Render + GitHub backed</footer>
 </div>
@@ -1204,6 +1183,29 @@ GET  /api/v1/arena/sonuc/{is_id}?key=sk-...  → asenkron iş durumu</pre>
 <b>model:</b> <code>&amp;model=openai/gpt-image-1-mini</code> (varsayılan ✨ stüdyo kalitesi, ~25sn) · <code>z-image-turbo</code> (~7sn) · <code>black-forest-labs/flux.1-schnell</code> (8sn, bol kota) · <code>microsoft/mai-image-2.5-flash</code> (18sn) — yalnız pollinations halkasında geçerli.<br>
 <b>Diğer:</b> <code>&amp;oran=16:9</code> · <code>&amp;stil=cinematic</code> · <code>&amp;negatif=blurry</code> · <code>&amp;bekleme=0</code> (asenkron) · <code>&amp;dosya=1</code> (indirme olarak sun).</p>
 <pre>→ {"ok":true,"gorsel_url":"http://52.188.9.53:8080/files/artifacts/...jpg","saglayici":"pollinations","fallback":null,"boyut":150478,"sure_ms":10361}</pre>
+</div>
+
+<div class="kart" style="border-color:#f472b655">
+<span class="yol">🗣️ TTS — Metin → Türkçe Ses MP3</span><span class="etiket get">GET</span>
+<p class="acik">Tamamen ücretsiz Microsoft Edge neural sesler: Emel (kadın) ve Ahmet (erkek). İstek anında MP3 akışı döner, sınırsız.</p>
+<pre>GET /api/v1/tts?metin=merhaba dünya&ses=emel&hiz=-10%&mod=indir&key=sk-...
+→ audio/mpeg akışı (mod=json olursa base64_mp3 + süre bilgisi)</pre>
+</div>
+
+<div class="kart" style="border-color:#fbbf2455">
+<span class="yol">✍️ Transkript — Ses → Metin</span><span class="etiket get">GET</span><span class="etiket post">POST</span>
+<p class="acik">Cloudflare Whisper ile konuşmayı metne çöz. Doğrudan ses dosyası linki ver (mp3/wav/ogg, &le;20MB); kelime zamanlaması destekli.</p>
+<pre>GET /api/v1/transkript?url=https://site.com/ses.mp3&key=sk-...
+POST /api/v1/transkript  {"url":"https://site.com/ses.mp3"}
+→ {"ok":true,"metin":"...","kelime_zamanli":true}</pre>
+</div>
+
+<div class="kart" style="border-color:#a78bfa55">
+<span class="yol">🧠 Sohbet — Ücretsiz LLM</span><span class="etiket get">GET</span><span class="etiket post">POST</span>
+<p class="acik">Cloudflare'da ücretli-tier GLM-4.7-flash; takas modelleri: <code>llama</code> (Meta 8B), <code>micro</code> (ultra hız). Gündelik kota bol (10K neuron/gün herkese bedava).</p>
+<pre>GET /api/v1/sohbet?mesaj=merhaba&model=glm&key=sk-...
+POST /api/v1/sohbet  {"mesaj":"2+2 kaç?","model":"micro"}
+→ {"ok":true,"cevap":"..."}</pre>
 </div>
 
 <footer>🎵 Şarkı API v2.0 — key yönetimi + kalıcı depolama • Kişisel kullanım</footer>
