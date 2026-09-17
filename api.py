@@ -30,6 +30,7 @@ Token yoksa yerel keys.json'a düşer (kalıcılık zayıflar, arayüzde uyarı 
 import base64
 import json
 import os
+import re
 import secrets
 import threading
 import time
