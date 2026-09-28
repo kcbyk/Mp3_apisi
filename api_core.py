@@ -147,8 +147,13 @@ def link_coz(item, fmt="mp3", kalite="320"):
         return (u, None) if u else (None, "Dönüşüm linki alınamadı (motorlar meşgul olabilir)")
     if k == "sc":
         prog = item.get("sc_prog_url") or core.sc_prog_url_bul(item.get("url"))
-        u = core.sc_direct_url(prog)
-        return (u, None) if u else (None, "SoundCloud linki alınamadı (bu parça HLS olabilir — convert ile indir)")
+        u = core.sc_direct_url(prog) if prog else None
+        if not u:
+            # SC parcasinda progressive MP3 yoksa -> YouTube yedegine otomatik gec
+            yt_res = core.yt_innertube_ara(item.get("baslik", ""), 1)
+            if yt_res:
+                u = core._yt_dl_url_bul(yt_res[0]["url"], None, str(kalite), "mp4" if fmt == "mp4" else "mp3")
+        return (u, None) if u else (None, "Medya linki alınamadı")
     if k == "tt":
         bilgi = core.tt_coz(item["url"])
         if not bilgi:

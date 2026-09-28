@@ -411,9 +411,18 @@ def convert():
 
 
 def _oynatma_sec(args, fmt):
-    """link/stream için sonuç seç: ?url= doğrudan veya ?q= aramasından (mp4 → sadece yt)."""
+    """link/stream/download için sonuç seç: ?url= doğrudan veya ?q= aramasından.
+    ?kaynak=sc veya ?hizli=1 verilirse 0.4 sn'lik turbo SoundCloud motorunu seçer."""
     url = args.get("url")
     izin = {ic for ic, dis in DI_KOD.items() if dis in g.izin}
+    istenen_kaynak = (args.get("kaynak") or args.get("source") or "").lower()
+    if istenen_kaynak in ("sc", "soundcloud"):
+        izin = {"sc"} & izin
+    elif istenen_kaynak in ("yt", "youtube"):
+        izin = {"yt"} & izin
+    elif istenen_kaynak in ("ia", "archive", "archive.org"):
+        izin = {"ia"} & izin
+
     if url:
         ic = ("tt" if "tiktok.com" in url else
               ("yt" if "youtube" in url or "youtu.be" in url else
@@ -430,6 +439,9 @@ def _oynatma_sec(args, fmt):
         return None, _hata("q veya url gerekli", 400)
     izin.discard("tt")
     izin.discard("web")
+    turbo = str(args.get("hizli") or args.get("turbo") or "").lower() in ("1", "true", "evet")
+    if turbo and "sc" in izin:
+        izin = {"sc"}
     sonuc = api_core.ara(q, 10, kaynaklar=izin)
     if fmt == "mp4":
         sonuc = [s for s in sonuc if s.get("kaynak") == "yt"]
