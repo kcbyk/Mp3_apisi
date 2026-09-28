@@ -583,31 +583,38 @@ PREWARM = {}        # yt url -> {"purl":..., "dl":..., "t":...}
 PREWARM_TTL = 600   # 10 dk
 
 def _loader_baslat(url, fmt="mp3"):
-    """loader.to donusumu baslatir; (progress_url, hata) dondurur. fmt: mp3 veya sayisal video kalitesi (360/720/1080)."""
-    h = {"User-Agent": ARA_HTTP["User-Agent"], "Referer": "https://loader.to/",
-         "Origin": "https://loader.to", "Accept": "*/*"}
+    """savenow / loader v2 API motoru (video-download-api.com) ile dönüştürme başlatır."""
+    h = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+         "Referer": "https://y2down.cc/", "Accept": "application/json, */*"}
+    # Format mapping:
+    f_val = "mp3" if fmt in ("mp3", "audio", "320", "128") else str(fmt)
     try:
-        r = HTTP_SESSION.get("https://loader.to/ajax/download.php",
-                         params={"format": fmt, "url": url}, headers=h, timeout=20).json()
+        r = HTTP_SESSION.get("https://p.savenow.to/api/v2/download",
+                             params={"format": f_val, "url": url}, headers=h, timeout=15).json()
     except Exception as ex:
-        return None, str(ex)[:60]
+        # Fallback to loader.to
+        try:
+            r = HTTP_SESSION.get("https://loader.to/ajax/download.php",
+                                 params={"format": f_val, "url": url}, headers=h, timeout=15).json()
+        except Exception:
+            return None, str(ex)[:60]
     if r.get("success") and r.get("progress_url"):
         return r["progress_url"], None
     return None, "servis kabul etmedi"
 
 def _loader_bekle(purl, ilerleme=None, onden=False):
-    """progress_url'i poll eder; download_url dondurur (adaptif polling)."""
-    h = {"User-Agent": ARA_HTTP["User-Agent"], "Referer": "https://loader.to/"}
+    """savenow/loader progress_url'i poll eder; download_url dondurur."""
+    h = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "application/json, */*"}
     t0 = time.time()
     son_prog, prog_t = None, time.time()
-    beklemeler = [0.5, 0.8, 1.2, 1.5, 2.0]
+    beklemeler = [0.4, 0.6, 0.8, 1.0, 1.5, 2.0]
     idx = 0
-    while time.time() - t0 < 120:
-        uyku = (1.0 if onden else beklemeler[idx] if idx < len(beklemeler) else 2.0)
+    while time.time() - t0 < 90:
+        uyku = (0.8 if onden else beklemeler[idx] if idx < len(beklemeler) else 1.5)
         idx += 1
         time.sleep(uyku)
         try:
-            p = HTTP_SESSION.get(purl, headers=h, timeout=12).json()
+            p = HTTP_SESSION.get(purl, headers=h, timeout=10).json()
         except Exception:
             continue
         gecen = int(time.time() - t0)
@@ -617,10 +624,12 @@ def _loader_bekle(purl, ilerleme=None, onden=False):
             ilerleme(max(2, min(60, prog // 10)), f"🔄 {ilk}... {gecen} sn")
         if prog != son_prog:
             son_prog, prog_t = prog, time.time()
-        elif time.time() - prog_t > 45 and prog < 1000:
+        elif time.time() - prog_t > 30 and prog < 1000:
             return None
-        if p.get("success") and prog >= 1000 and p.get("download_url"):
+        if p.get("download_url") and (p.get("success") or prog >= 1000):
             return p["download_url"]
+        if p.get("url") and p.get("success"):
+            return p["url"]
     return None
 
 def prewarm_baslat(url):
