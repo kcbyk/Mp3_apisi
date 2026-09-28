@@ -6,3 +6,4 @@ youtube-search>=2.1.1
 imageio-ffmpeg>=0.5
 ddgs
 edge-tts
+pycryptodome>=3.20.0

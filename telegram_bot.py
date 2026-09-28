@@ -474,6 +474,49 @@ def sc_fast_indir(s, ilerleme=None):
     kayit_ekle(fname, s["baslik"], s.get("kanal", ""), s.get("url", ""), s.get("sure", 0) or mp3_sure(MUZIK / fname))
     return fname, None
 
+# --------------------------- JioSaavn 320k High-Speed Motor ---------------------------
+
+def saavn_ara(q, adet=5):
+    """JioSaavn uzerinden 0.3 sn'de 320kbps dogrudan CDN parcalari arar."""
+    try:
+        url = f"https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&cc=in&includeMetaTags=1&query={requests.utils.quote(q)}"
+        r = HTTP_SESSION.get(url, timeout=5).json()
+        songs = r.get("songs", {}).get("data", [])
+        sonuclar = []
+        for s in songs[:adet]:
+            sonuclar.append({
+                "kaynak": "saavn",
+                "id": s.get("id"),
+                "url": s.get("url") or f"https://www.jiosaavn.com/song/{s.get('id')}",
+                "baslik": (s.get("title") or "").replace("&quot;", '"').replace("&amp;", "&"),
+                "kanal": s.get("more_info", {}).get("music") or s.get("more_info", {}).get("singers") or "JioSaavn",
+                "sure": 0,
+                "kapak": s.get("image", "").replace("50x50", "500x500").replace("150x150", "500x500")
+            })
+        return sonuclar
+    except Exception as ex:
+        print("[saavn] arama hatasi:", str(ex)[:60], flush=True)
+        return []
+
+def saavn_320k_link(song_id):
+    """JioSaavn DES sifresini cozerek dogrudan 320kbps CDN stream linki uretir (0.2 sn)."""
+    try:
+        from Crypto.Cipher import DES
+        from Crypto.Util.Padding import unpad
+        import base64
+        url = f"https://www.jiosaavn.com/api.php?__call=song.getDetails&cc=in&_marker=0%3F_marker%3D0&_format=json&pids={song_id}"
+        r = HTTP_SESSION.get(url, timeout=5).json()
+        enc = r.get(song_id, {}).get("encrypted_media_url")
+        if enc:
+            key = b"38346591"
+            cipher = DES.new(key, DES.MODE_ECB)
+            raw = base64.b64decode(enc.strip())
+            dec = unpad(cipher.decrypt(raw), 8).decode("utf-8")
+            return dec.replace("_96.mp4", "_320.mp4").replace("_160.mp4", "_320.mp4").replace("_96_p.mp4", "_320.mp4")
+    except Exception as ex:
+        print("[saavn] link cozme hatasi:", str(ex)[:60], flush=True)
+    return None
+
 # --------------------------- YouTube (loader.to scraping) ---------------------------
 
 def yt_innertube_ara(q, adet=12):
