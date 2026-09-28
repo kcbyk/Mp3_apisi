@@ -39,9 +39,11 @@ from functools import wraps
 from pathlib import Path
 
 import requests as _rq
-from flask import Flask, abort, g, jsonify, redirect, request, send_file
+import urllib.parse
+from flask import Flask, abort, g, jsonify, redirect, request, send_file, Response, stream_with_context
 
 import api_core
+import telegram_bot as core
 
 BASE = Path(__file__).resolve().parent
 KEYF = BASE / "api_key.txt"
@@ -424,6 +426,8 @@ def _oynatma_sec(args, fmt):
     q = (args.get("q") or "").strip()
     if not q:
         return None, _hata("q veya url gerekli", 400)
+    izin.discard("tt")
+    izin.discard("web")
     sonuc = api_core.ara(q, 10, kaynaklar=izin)
     if fmt == "mp4":
         sonuc = [s for s in sonuc if s.get("kaynak") == "yt"]
@@ -478,6 +482,49 @@ def stream_ep():
     if not direct:
         return _hata(hata or "link çözülemedi", 502)
     return redirect(direct, code=302)
+
+
+@app.get("/api/v1/download-stream")
+@app.get("/api/v1/download")
+@korumali
+def download_stream_ep():
+    """Ultra hızlı indirme: Çözülen sesi sunucu diskine yazmadan doğrudan kullanıcıya aktarır (streaming pipe)."""
+    fmt = _format_al(request.args, None)
+    kalite = _kalite_al(request.args, None, fmt)
+    if fmt is None:
+        return _hata("format mp3 veya mp4 olabilir", 400)
+    if kalite is None and not _tt_mu(request.args, None):
+        return _hata("kalite, mp3'te 128/192/320; mp4'te 360/480/720/1080 olabilir", 400)
+    item, h = _oynatma_sec(request.args, fmt)
+    if h:
+        return h
+    if item.get("kaynak") == "tt":
+        kalite = "kaynak"
+    direct, hata = api_core.link_coz_cached(item, fmt, kalite)
+    if not direct:
+        return _hata(hata or "link çözülemedi", 502)
+
+    baslik = core.temizle_ad(item.get("baslik") or "sarki")
+    uzanti = "mp4" if fmt == "mp4" else "mp3"
+    mime = "video/mp4" if fmt == "mp4" else "audio/mpeg"
+    ascii_fname = "".join(c for c in baslik if c.isalnum() or c in " -_.").strip() or "audio"
+    url_fname = urllib.parse.quote(f"{baslik}.{uzanti}")
+
+    def generate():
+        with core.HTTP_SESSION.get(direct, headers=core.ARA_HTTP, stream=True, timeout=(15, 90)) as r:
+            r.raise_for_status()
+            for chunk in r.iter_content(chunk_size=524288):
+                if chunk:
+                    yield chunk
+
+    return Response(
+        stream_with_context(generate()),
+        headers={
+            "Content-Disposition": f'attachment; filename="{ascii_fname}.{uzanti}"; filename*=UTF-8\'\'{url_fname}',
+            "Content-Type": mime,
+            "Accept-Ranges": "bytes"
+        }
+    )
 
 
 @app.get("/api/v1/sozler")
@@ -1419,10 +1466,11 @@ const aktif = satirlar.filter(s => s.t <= player.currentTime).length - 1;</pre>
 </div>
 
 <div class="kart">
-<span class="yol">GET /api/v1/link?q={sorgu}&format=mp3</span> <span class="yol">GET /api/v1/stream?q={sorgu}</span><span class="etiket get">GET</span>
-<p class="acik"><b>İndirmeden oynatma! TikTok dahil:</b> Şarkıyı/videoyu sunucuya indirmez — <b>direkt CDN linkini</b> verir: <code>link</code> JSON döner, <code>stream</code> 302 yönlendirir (oynatıcıya koy, çalsın). SoundCloud ~1 sn, YouTube 3-10 sn (dönüşüm), Archive anında. Disk kullanılmaz.</p>
+<span class="yol">GET /api/v1/link?q={sorgu}&format=mp3</span> <span class="yol">GET /api/v1/stream?q={sorgu}</span> <span class="yol">GET /api/v1/download?q={sorgu}</span><span class="etiket get">GET</span>
+<p class="acik"><b>⚡ Ultra Hızlı Oynatma ve İndirme (Zero-Wait):</b> Şarkıyı sunucu diskine kaydetmeyi beklemeden doğrudan oynatır veya indirir. <code>link</code> JSON döner, <code>stream</code> 302 yönlendirir, <b><code>download</code></b> doğrudan dosya akışı (attachment pipe) başlatır.</p>
 <pre>&lt;audio src="https://SUNUCU/api/v1/stream?q=tarkan kuzu kuzu&key=sk-..."&gt;&lt;/audio&gt;
-&lt;video src="https://SUNUCU/api/v1/stream?q=klip adı&format=mp4&kalite=720&key=sk-..."&gt;&lt;/video&gt;
+curl -L "https://SUNUCU/api/v1/download?q=tarkan+kuzu+kuzu&key=sk-..." -o sarki.mp3</pre>
+</div>
 
 // veya linki kendin al:
 const d = await fetch(".../api/v1/link?q=şarkı&key=...").then(r=>r.json());

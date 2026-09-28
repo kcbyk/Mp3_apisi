@@ -25,7 +25,22 @@ if deno.exists():
     os.environ["PATH"] = str(deno) + os.pathsep + os.environ.get("PATH", "")
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import yt_dlp
+
+# Global Persistent HTTP Session (Connection Pooling & Fast TLS Handshake)
+HTTP_SESSION = requests.Session()
+_http_adapter = HTTPAdapter(
+    pool_connections=50,
+    pool_maxsize=100,
+    max_retries=Retry(total=2, backoff_factor=0.2)
+)
+HTTP_SESSION.mount('https://', _http_adapter)
+HTTP_SESSION.mount('http://', _http_adapter)
+HTTP_SESSION.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+})
 
 BASE = Path(__file__).resolve().parent
 MUZIK = BASE / "muzik"
@@ -38,14 +53,35 @@ API = f"https://api.telegram.org/bot{TOKEN}"
 
 # --------------------------- Yardimcilar ---------------------------
 
+_LIB_CACHE = None
+_LIB_CACHE_LOCK = threading.Lock()
+_LIB_LAST_MTIME = 0
+
 def lib_yukle():
-    try:
-        return json.loads(LIBF.read_text(encoding="utf-8"))
-    except Exception:
+    global _LIB_CACHE, _LIB_LAST_MTIME
+    with _LIB_CACHE_LOCK:
+        try:
+            if LIBF.exists():
+                mtime = LIBF.stat().st_mtime
+                if _LIB_CACHE is not None and mtime == _LIB_LAST_MTIME:
+                    return list(_LIB_CACHE)
+                data = json.loads(LIBF.read_text(encoding="utf-8"))
+                _LIB_CACHE = data
+                _LIB_LAST_MTIME = mtime
+                return list(_LIB_CACHE)
+        except Exception:
+            pass
         return []
 
 def lib_kaydet(items):
-    LIBF.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+    global _LIB_CACHE, _LIB_LAST_MTIME
+    with _LIB_CACHE_LOCK:
+        try:
+            _LIB_CACHE = list(items)
+            LIBF.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+            _LIB_LAST_MTIME = LIBF.stat().st_mtime
+        except Exception:
+            pass
 
 def temizle_ad(name):
     name = re.sub(r'[\\/:*?"<>|\r\n\t]+', " ", str(name))
@@ -224,11 +260,13 @@ def kayit_ekle(dosya, baslik, kanal, url, sure=0):
                    "sure": sure, "tarih": time.strftime("%Y-%m-%d %H:%M")})
     lib_kaydet(lib)
 
-def mp3_sure(yol):
+def mp3_sure(yol, bilinen_sure=0):
+    if bilinen_sure and bilinen_sure > 0:
+        return int(bilinen_sure)
     try:
         cikti = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                 "-of", "default=nw=1:nk=1", str(yol)],
-                               capture_output=True, text=True, timeout=15).stdout.strip()
+                               capture_output=True, text=True, timeout=3).stdout.strip()
         return int(float(cikti))
     except Exception:
         return 0
@@ -240,7 +278,7 @@ ARA_HTTP = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
 def archive_ara(q, adet=6):
     """archive.org acik arama API'si — bot duvari yok, klasikler icin altin madeni."""
     try:
-        r = requests.get("https://archive.org/advancedsearch.php",
+        r = HTTP_SESSION.get("https://archive.org/advancedsearch.php",
                          params={"q": f"({q}) AND mediatype:audio",
                                  "fl[]": ["identifier", "title"], "rows": adet,
                                  "output": "json"},
@@ -258,7 +296,7 @@ STEMLER = ("_drums", "_instrumental", "_vocals", "_other")
 def archive_indir(ia_id, baslik, istenen, ilerleme=None):
     """archive.org kaydindan istenen sarkiya en uygun mp3'yi indirir."""
     try:
-        md = requests.get(f"https://archive.org/metadata/{ia_id}", timeout=20,
+        md = HTTP_SESSION.get(f"https://archive.org/metadata/{ia_id}", timeout=20,
                           headers=ARA_HTTP).json()
     except Exception as ex:
         return None, f"Arşiv okunamadı: {str(ex)[:80]}"
@@ -296,12 +334,12 @@ def archive_indir(ia_id, baslik, istenen, ilerleme=None):
 
     url = f"https://archive.org/download/{ia_id}/{urllib.parse.quote(sec['name'])}"
     try:
-        with requests.get(url, stream=True, timeout=(15, 60), headers=ARA_HTTP) as r:
+        with HTTP_SESSION.get(url, stream=True, timeout=(15, 60), headers=ARA_HTTP) as r:
             r.raise_for_status()
             tot = int(r.headers.get("content-length") or sayi(sec.get("size")) or 0)
             done = 0
             with open(MUZIK / fname, "wb") as fh:
-                for chunk in r.iter_content(65536):
+                for chunk in r.iter_content(1048576):
                     fh.write(chunk)
                     done += len(chunk)
                     if ilerleme:
@@ -329,21 +367,30 @@ mesgul = set()
 
 SC_API = "https://api-v2.soundcloud.com"
 SC_CIDF = BASE / "sc_client_id.txt"
+_SC_CID_CACHE = None
 
 def sc_client_id():
-    """Web client_id'yi getir; yoksa soundcloud.com'dan kazimada bul."""
+    """Web client_id'yi getir; yoksa soundcloud.com'dan kazimada bul (RAM cache'li)."""
+    global _SC_CID_CACHE
+    if _SC_CID_CACHE:
+        return _SC_CID_CACHE
     if SC_CIDF.exists():
-        cid = SC_CIDF.read_text().strip()
-        if cid:
-            return cid
+        try:
+            cid = SC_CIDF.read_text().strip()
+            if cid:
+                _SC_CID_CACHE = cid
+                return cid
+        except Exception:
+            pass
     try:
-        r = requests.get("https://soundcloud.com/", headers=ARA_HTTP, timeout=15)
+        r = HTTP_SESSION.get("https://soundcloud.com/", headers=ARA_HTTP, timeout=15)
         js = list(dict.fromkeys(re.findall(r'https://a-v2\.sndcdn\.com/assets/[^"\']+\.js', r.text)))
         for u in js:
             try:
-                t = requests.get(u, headers=ARA_HTTP, timeout=10).text
+                t = HTTP_SESSION.get(u, headers=ARA_HTTP, timeout=10).text
                 m = re.search(r'client_id["\']?\s*[:=]\s*["\']([0-9A-Za-z_\-]{16,64})["\']', t)
                 if m:
+                    _SC_CID_CACHE = m.group(1)
                     SC_CIDF.write_text(m.group(1))
                     return m.group(1)
             except Exception:
@@ -358,7 +405,7 @@ def sc_fast_ara(q, adet=6):
     if not cid:
         return []
     try:
-        r = requests.get(f"{SC_API}/search/tracks",
+        r = HTTP_SESSION.get(f"{SC_API}/search/tracks",
                          params={"q": q, "client_id": cid, "limit": adet},
                          headers=ARA_HTTP, timeout=10)
         if r.status_code in (401, 403):
@@ -391,7 +438,7 @@ def sc_fast_indir(s, ilerleme=None):
     if not cid:
         return None, "client_id yok"
     try:
-        dl = requests.get(prog_url, params={"client_id": cid}, headers=ARA_HTTP, timeout=12).json()["url"]
+        dl = HTTP_SESSION.get(prog_url, params={"client_id": cid}, headers=ARA_HTTP, timeout=12).json()["url"]
     except Exception as ex:
         return None, f"hizli url alinamadi: {str(ex)[:50]}"
 
@@ -401,13 +448,13 @@ def sc_fast_indir(s, ilerleme=None):
         i += 1
         fname = f"{base} ({i}).mp3"
     try:
-        with requests.get(dl, headers=ARA_HTTP, timeout=(15, 40), stream=True) as rr:
+        with HTTP_SESSION.get(dl, headers=ARA_HTTP, timeout=(15, 40), stream=True) as rr:
             rr.raise_for_status()
             tot = int(rr.headers.get("content-length") or 0)
             done = 0
             t0 = time.time()
             with open(MUZIK / fname, "wb") as fh:
-                for chunk in rr.iter_content(131072):
+                for chunk in rr.iter_content(1048576):
                     fh.write(chunk)
                     done += len(chunk)
                     if done > 48 * 1024 * 1024:
@@ -498,7 +545,7 @@ def _loader_baslat(url, fmt="mp3"):
     h = {"User-Agent": ARA_HTTP["User-Agent"], "Referer": "https://loader.to/",
          "Origin": "https://loader.to", "Accept": "*/*"}
     try:
-        r = requests.get("https://loader.to/ajax/download.php",
+        r = HTTP_SESSION.get("https://loader.to/ajax/download.php",
                          params={"format": fmt, "url": url}, headers=h, timeout=20).json()
     except Exception as ex:
         return None, str(ex)[:60]
@@ -507,14 +554,18 @@ def _loader_baslat(url, fmt="mp3"):
     return None, "servis kabul etmedi"
 
 def _loader_bekle(purl, ilerleme=None, onden=False):
-    """progress_url'i poll eder; download_url dondurur."""
+    """progress_url'i poll eder; download_url dondurur (adaptif polling)."""
     h = {"User-Agent": ARA_HTTP["User-Agent"], "Referer": "https://loader.to/"}
     t0 = time.time()
     son_prog, prog_t = None, time.time()
+    beklemeler = [0.5, 0.8, 1.2, 1.5, 2.0]
+    idx = 0
     while time.time() - t0 < 120:
-        time.sleep(2 if onden else 3)
+        uyku = (1.0 if onden else beklemeler[idx] if idx < len(beklemeler) else 2.0)
+        idx += 1
+        time.sleep(uyku)
         try:
-            p = requests.get(purl, headers=h, timeout=15).json()
+            p = HTTP_SESSION.get(purl, headers=h, timeout=12).json()
         except Exception:
             continue
         gecen = int(time.time() - t0)
@@ -547,32 +598,45 @@ def prewarm_baslat(url):
     threading.Thread(target=gorev, daemon=True).start()
 
 RUVS_HATA = set()  # ruvs.in motorunun calismadigi url'ler (loader.to'ya dusulur)
+_ruvs_engelli_kadar = 0
 
 def _ruvs_baslat(url, kalite="320", fmt="mp3"):
     """Taze ruvs.in motoru (2026-08) — donusum isini baslatir; job_id dondurur.
     kalite: mp3 icin 128/192/320, mp4 icin 360/480/720/1080."""
+    global _ruvs_engelli_kadar
+    if time.time() < _ruvs_engelli_kadar:
+        return None
     h = dict(ARA_HTTP)
     h.update({"Origin": "https://www.ruvs.in", "Content-Type": "application/json",
               "Referer": "https://www.ruvs.in/tools/youtube/mp3-converter"})
     try:
-        r = requests.post("https://www.ruvs.in/api/convert",
-                          data=json.dumps({"url": url, "format": fmt, "quality": str(kalite)}),
-                          headers=h, timeout=20).json()
-        if r.get("job_id"):
-            return r["job_id"]
+        r = HTTP_SESSION.post("https://www.ruvs.in/api/convert",
+                              data=json.dumps({"url": url, "format": fmt, "quality": str(kalite)}),
+                              headers=h, timeout=12)
+        if r.status_code == 429:
+            _ruvs_engelli_kadar = time.time() + 60
+            print("[ruvs] rate limit (429) alindi, 60 sn beklemeye gecildi", flush=True)
+            return None
+        data = r.json()
+        if data.get("job_id"):
+            return data["job_id"]
     except Exception as ex:
         print("[ruvs] baslatma hatasi:", str(ex)[:60], flush=True)
     return None
 
 def _ruvs_bekle(jid, ilerleme=None):
-    """ruvs.in isini poll eder; download_url dondurur (genelde 3-8 sn)."""
+    """ruvs.in isini poll eder; download_url dondurur (adaptif hizli polling ile 0.8-3 sn)."""
     h = dict(ARA_HTTP)
     h.update({"Referer": "https://www.ruvs.in/"})
     t0 = time.time()
+    beklemeler = [0.25, 0.4, 0.6, 0.8, 1.0, 1.2, 1.5, 2.0]
+    idx = 0
     while time.time() - t0 < 70:
-        time.sleep(2)
+        uyku = beklemeler[idx] if idx < len(beklemeler) else 1.5
+        idx += 1
+        time.sleep(uyku)
         try:
-            c = requests.get(f"https://www.ruvs.in/api/check?job_id={jid}", headers=h, timeout=15).json()
+            c = HTTP_SESSION.get(f"https://www.ruvs.in/api/check?job_id={jid}", headers=h, timeout=10).json()
         except Exception:
             continue
         if c.get("status") == "completed" and c.get("download_url"):
@@ -664,10 +728,10 @@ def _mp4_ses_onar(url, video_yol, ilerleme=None):
     ses_dosya = video_yol.parent / (video_yol.stem + ".tmpses.mp3")
     cikti = video_yol.parent / (video_yol.stem + ".sesli.tmp.mp4")
     try:
-        with requests.get(mp3_url, headers=ARA_HTTP, timeout=(15, 60), stream=True) as rr:
+        with HTTP_SESSION.get(mp3_url, headers=ARA_HTTP, timeout=(15, 60), stream=True) as rr:
             rr.raise_for_status()
             with open(ses_dosya, "wb") as fh:
-                for ch in rr.iter_content(65536):
+                for ch in rr.iter_content(1048576):
                     fh.write(ch)
         komut = [ff, "-y", "-i", str(video_yol), "-i", str(ses_dosya),
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest",
@@ -714,7 +778,7 @@ def sozler_lrclib(sarki, sanatci="", sure_hedef=0):
                 "synced": d.get("syncedLyrics") or ""}
     try:
         if sanatci:
-            r = requests.get("https://lrclib.net/api/get",
+            r = HTTP_SESSION.get("https://lrclib.net/api/get",
                              params={"artist_name": sanatci, "track_name": sarki},
                              headers=ARA_HTTP, timeout=12)
             if r.status_code == 200:
@@ -722,7 +786,7 @@ def sozler_lrclib(sarki, sanatci="", sure_hedef=0):
                 if p["plain"] or p["synced"]:
                     if not sure_hedef or abs(p["sure"] - sure_hedef) <= 25:
                         return p
-        r = requests.get("https://lrclib.net/api/search",
+        r = HTTP_SESSION.get("https://lrclib.net/api/search",
                          params={"q": f"{sanatci} {sarki}".strip()}, headers=ARA_HTTP, timeout=12)
         if r.status_code != 200:
             return None
@@ -759,7 +823,7 @@ def sozler_youtube(q):
                 f = next((x for x in fmts if x.get("ext") == "json3"), None) or (fmts[0] if fmts else None)
                 if not f:
                     continue
-                r = requests.get(f["url"], headers=ARA_HTTP, timeout=15)
+                r = HTTP_SESSION.get(f["url"], headers=ARA_HTTP, timeout=15)
                 satirlar = []
                 for e in r.json().get("events", []):
                     segs = e.get("segs")
@@ -808,7 +872,7 @@ def _tt_get(yol, **params):
         _tt_son_cagri[0] = _t.time()
     tam = f"https://www.tikwm.com/api/{yol}"
     try:
-        r = requests.get(tam, params=params, headers=UA, timeout=25)
+        r = HTTP_SESSION.get(tam, params=params, headers=UA, timeout=25)
         if r.status_code == 200:
             return r.json()
     except Exception as ex:
@@ -817,7 +881,7 @@ def _tt_get(yol, **params):
     try:
         sorgu = tam + ("&" if "?" in tam else "?") + "&".join(
             f"{k}={requests.utils.quote(str(v), safe='')}" for k, v in params.items())
-        r2 = requests.get("https://r.jina.ai/" + sorgu,
+        r2 = HTTP_SESSION.get("https://r.jina.ai/" + sorgu,
                           headers={"User-Agent": UA["User-Agent"]}, timeout=35)
         if r2.status_code == 200:
             metin = r2.text
@@ -882,12 +946,12 @@ def tt_indir(url, baslik, ilerleme=None, ses=False, max_mb=150):
         i += 1
         fname = f"{base} ({i}).{uzanti}"
     try:
-        with requests.get(dl, headers=ARA_HTTP, timeout=(15, 90), stream=True) as rr:
+        with HTTP_SESSION.get(dl, headers=ARA_HTTP, timeout=(15, 90), stream=True) as rr:
             rr.raise_for_status()
             tot = int(rr.headers.get("content-length") or bilgi.get("boyut") or 0)
             done, t0 = 0, time.time()
             with open(MUZIK / fname, "wb") as fh:
-                for ch in rr.iter_content(65536):
+                for ch in rr.iter_content(1048576):
                     fh.write(ch)
                     done += len(ch)
                     if done > max_mb * 1024 * 1024:
@@ -947,7 +1011,7 @@ def web_ara(q, limit=10):
 
     # 1) DDG lite HTML (tek basit POST)
     try:
-        r = requests.post("https://lite.duckduckgo.com/lite/", data={"q": q},
+        r = HTTP_SESSION.post("https://lite.duckduckgo.com/lite/", data={"q": q},
                           headers=ARA_HTTP, timeout=20)
         linkler = [(u, re.sub("<[^>]+>", "", t).strip())
                    for u, t in re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', r.text)]
@@ -971,7 +1035,7 @@ def web_ara(q, limit=10):
     if not sonuc:
         try:
             hedef = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(q)
-            r = requests.get("https://r.jina.ai/" + hedef,
+            r = HTTP_SESSION.get("https://r.jina.ai/" + hedef,
                              headers={"User-Agent": ARA_HTTP["User-Agent"]}, timeout=35)
             isaret = list(re.finditer(
                 r'\[([^\]\[]{5,140})\]\(https://duckduckgo\.com/l/\?uddg=([^)&]+)[^)]*\)', r.text))
@@ -1020,7 +1084,7 @@ def web_ara(q, limit=10):
     # 4) Wikipedia (son cikis)
     if not sonuc:
         try:
-            r = requests.get("https://tr.wikipedia.org/w/api.php", params={
+            r = HTTP_SESSION.get("https://tr.wikipedia.org/w/api.php", params={
                 "action": "query", "list": "search", "srsearch": q, "format": "json",
                 "srlimit": min(limit, 10)}, headers=ARA_HTTP, timeout=15)
             for s in (r.json().get("query") or {}).get("search") or []:
@@ -1046,7 +1110,7 @@ def oku(url, max_karakter=6000):
     r = None
     for deneme in range(3):
         try:
-            r = requests.get("https://r.jina.ai/" + url,
+            r = HTTP_SESSION.get("https://r.jina.ai/" + url,
                              headers={"User-Agent": ARA_HTTP["User-Agent"]}, timeout=40)
             if r.status_code == 200:
                 break
@@ -1108,7 +1172,7 @@ def _resim_boyut(data):
 
 def _kapak_itunes(q):
     try:
-        r = requests.get("https://itunes.apple.com/search",
+        r = HTTP_SESSION.get("https://itunes.apple.com/search",
                          params={"term": q, "entity": "song", "limit": 1},
                          headers=ARA_HTTP, timeout=15)
         sonuc = (r.json().get("results") or [])
@@ -1129,7 +1193,7 @@ def _kapak_itunes(q):
 def _kapak_deezer(q):
     try:
         hedef = "https://api.deezer.com/search?q=" + urllib.parse.quote(q) + "&limit=1"
-        r = requests.get("https://r.jina.ai/" + hedef,
+        r = HTTP_SESSION.get("https://r.jina.ai/" + hedef,
                          headers={"User-Agent": ARA_HTTP["User-Agent"]}, timeout=30)
         idx = r.text.find("{")
         if idx < 0:
@@ -1150,7 +1214,7 @@ def _kapak_deezer(q):
 
 def _kapak_caa(q):
     try:
-        r = requests.get("https://musicbrainz.org/ws/2/release/",
+        r = HTTP_SESSION.get("https://musicbrainz.org/ws/2/release/",
                          params={"query": q, "fmt": "json", "limit": 1},
                          headers={"User-Agent": "mp3-apisi/1.0 (github.com/kcbyk/Mp3_apisi)"},
                          timeout=15)
@@ -1166,7 +1230,7 @@ def _kapak_caa(q):
         adaylar.append(f"https://coverartarchive.org/release/{mbid}/front")
         for u in adaylar:
             try:
-                rr = requests.get(u, headers=ARA_HTTP, timeout=30)
+                rr = HTTP_SESSION.get(u, headers=ARA_HTTP, timeout=30)
                 if rr.status_code == 200 and rr.content[:2] in (b"\xff\xd8", b"\x89P"):
                     return {"url": u,
                             "sanatci": ((rls.get("artist-credit") or [{}])[0].get("name") or ""),
@@ -1211,7 +1275,7 @@ def kapak_bul(q):
             continue
         for u in [ad["url"]] + ([ad["yedek"]] if ad.get("yedek") else []):
             try:
-                rr = requests.get(u, headers=ARA_HTTP, timeout=25)
+                rr = HTTP_SESSION.get(u, headers=ARA_HTTP, timeout=25)
                 if rr.status_code != 200 or len(rr.content) < 3000:
                     continue
                 boy = _resim_boyut(rr.content)
@@ -1235,7 +1299,7 @@ def sc_prog_url_bul(track_url):
     if not cid or "soundcloud.com" not in (track_url or ""):
         return None
     try:
-        d = requests.get("https://api-v2.soundcloud.com/resolve",
+        d = HTTP_SESSION.get("https://api-v2.soundcloud.com/resolve",
                          params={"url": track_url, "client_id": cid},
                          headers=ARA_HTTP, timeout=12).json()
         prog = [t for t in (d.get("media") or {}).get("transcodings", [])
@@ -1254,7 +1318,7 @@ def sc_direct_url(prog_url):
     if not cid:
         return None
     try:
-        return requests.get(prog_url, params={"client_id": cid},
+        return HTTP_SESSION.get(prog_url, params={"client_id": cid},
                             headers=ARA_HTTP, timeout=12).json()["url"]
     except Exception:
         return None
@@ -1274,7 +1338,7 @@ def archive_direct_url(ia_id, istenen=""):
             s -= 5
         return s
     try:
-        md = requests.get(f"https://archive.org/metadata/{ia_id}", timeout=20,
+        md = HTTP_SESSION.get(f"https://archive.org/metadata/{ia_id}", timeout=20,
                           headers=ARA_HTTP).json()
     except Exception:
         return None
@@ -1304,12 +1368,12 @@ def _yt_indir_ortak(url, baslik, ilerleme=None, sure=0, kalite="320", fmt="mp3",
         i += 1
         fname = f"{base} ({i}).{uzanti}"
     try:
-        with requests.get(dl, headers=ARA_HTTP, timeout=(15, 60), stream=True) as rr:
+        with HTTP_SESSION.get(dl, headers=ARA_HTTP, timeout=(15, 60), stream=True) as rr:
             rr.raise_for_status()
             tot = int(rr.headers.get("content-length") or 0)
             done, ind_t = 0, time.time()
             with open(MUZIK / fname, "wb") as fh:
-                for chunk in rr.iter_content(65536):
+                for chunk in rr.iter_content(1048576):
                     fh.write(chunk)
                     done += len(chunk)
                     if done > max_mb * 1024 * 1024:
@@ -1371,12 +1435,12 @@ def yt_indir(url, baslik, ilerleme=None, sure=0, kalite="320"):
         i += 1
         fname = f"{base} ({i}).mp3"
     try:
-        with requests.get(dl, headers=ARA_HTTP, timeout=(15, 60), stream=True) as rr:
+        with HTTP_SESSION.get(dl, headers=ARA_HTTP, timeout=(15, 60), stream=True) as rr:
             rr.raise_for_status()
             tot = int(rr.headers.get("content-length") or 0)
             done, ind_t = 0, time.time()
             with open(MUZIK / fname, "wb") as fh:
-                for chunk in rr.iter_content(65536):
+                for chunk in rr.iter_content(1048576):
                     fh.write(chunk)
                     done += len(chunk)
                     if done > 48 * 1024 * 1024:

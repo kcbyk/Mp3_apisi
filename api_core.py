@@ -58,6 +58,10 @@ def ara(q, limit=8, kaynaklar=None):
     ORAN = {"yt": 0.7, "sc": 0.5, "ia": 0.35}
     if kaynaklar is None:
         kaynaklar = set(KAP)
+    else:
+        kaynaklar = {k for k in kaynaklar if k in KAP}
+    if not kaynaklar:
+        return []
     istenen = {}
     for k in kaynaklar:
         istenen[k] = min(KAP[k], max(4, math.ceil(limit * ORAN[k])))
@@ -199,9 +203,9 @@ def link_coz_cached(item, fmt="mp3", kalite="320", bekleme_sn=35):
 
 
 def onizleme_baslat(sonuclar):
-    """Arama sonrasi ilk 3 YouTube sonucunun linklerini ARKA PLANDA paralel cozer.
+    """Arama sonrasi ilk YouTube sonucunun linkini ARKA PLANDA cozer.
     Kullanici listeye bakarken donusum biter -> bastigi an link hazir (0.01 sn aninda acilir)."""
-    yt_list = [s for s in sonuclar if s.get("kaynak") == "yt"][:3]
+    yt_list = [s for s in sonuclar if s.get("kaynak") == "yt"][:1]
     for yt in yt_list:
         threading.Thread(target=link_coz_cached, args=(dict(yt), "mp3", "320"), daemon=True).start()
 
