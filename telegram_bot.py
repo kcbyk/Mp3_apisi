@@ -689,9 +689,73 @@ def _ruvs_bekle(jid, ilerleme=None):
             ilerleme(35, f"🚀 Motor çeviriyor... {int(time.time()-t0)} sn")
     return None
 
+def extract_yt_id(url):
+    """YouTube video ID'sini cikarir (11 karakter)."""
+    import re
+    m = re.search(r"(?:v=|youtu\.be\/|youtube\.com\/(?:shorts\/|embed\/))([A-Za-z0-9_-]{11})", url or "")
+    return m.group(1) if m else url
+
+
+# RapidAPI Key Havuzu (youtube-mp36 / ytjar 0.4s Ultra Hızlı Motor)
+RAPIDAPI_KEYS = [k.strip() for k in os.environ.get("RAPIDAPI_KEYS", os.environ.get("RAPIDAPI_KEY", "")).split(",") if k.strip()]
+_rapid_key_cycle = None
+_rapid_key_lock = threading.Lock()
+
+def _get_next_rapid_key():
+    global _rapid_key_cycle
+    with _rapid_key_lock:
+        if not RAPIDAPI_KEYS:
+            return None
+        import itertools
+        if _rapid_key_cycle is None:
+            _rapid_key_cycle = itertools.cycle(RAPIDAPI_KEYS)
+        return next(_rapid_key_cycle)
+
+def _rapid_ytjar_url_bul(url, timeout=5):
+    """youtube-mp36 (ytjar) motoru ile ~0.4 sn'de doğrudan Hetzner CDN linki çözümler."""
+    if not RAPIDAPI_KEYS:
+        return None
+    vid = extract_yt_id(url)
+    if not vid:
+        return None
+    for _ in range(min(len(RAPIDAPI_KEYS), 3)):
+        key = _get_next_rapid_key()
+        if not key:
+            break
+        headers = {
+            "X-RapidAPI-Key": key,
+            "X-RapidAPI-Host": "youtube-mp36.p.rapidapi.com",
+            "User-Agent": "Mozilla/5.0"
+        }
+        try:
+            r = HTTP_SESSION.get(f"https://youtube-mp36.p.rapidapi.com/dl?id={vid}", headers=headers, timeout=timeout)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("status") == "ok" and data.get("link"):
+                    return data.get("link")
+                if data.get("status") == "processing":
+                    time.sleep(0.5)
+                    r2 = HTTP_SESSION.get(f"https://youtube-mp36.p.rapidapi.com/dl?id={vid}", headers=headers, timeout=timeout)
+                    if r2.status_code == 200:
+                        d2 = r2.json()
+                        if d2.get("link"):
+                            return d2.get("link")
+        except Exception as e:
+            print(f"[rapid-ytjar] Hata ({key[:6]}...): {e}", flush=True)
+            continue
+    return None
+
+
 def _yt_dl_url_bul(url, ilerleme=None, kalite="320", fmt="mp3"):
-    """Once TAZE ruvs.in motoru, olmazsa loader.to. download_url dondurur.
-    fmt='mp4' icin loader.to format parametresi sayisal kalite olur (360/720/1080)."""
+    """0. Öncelik: RapidAPI ytjar Hetzner CDN (0.4s)
+    1. Öncelik: ruvs.in motoru
+    2. Öncelik: loader.to motoru"""
+    if fmt == "mp3":
+        fast_dl = _rapid_ytjar_url_bul(url)
+        if fast_dl:
+            print(f"[yt] ⚡ rapid-ytjar Hetzner CDN yakalandı (0.4 sn): {fast_dl[:60]}...", flush=True)
+            return fast_dl
+
     if url not in RUVS_HATA:
         jid = _ruvs_baslat(url, kalite, fmt)
         if jid:
