@@ -230,6 +230,8 @@ def _yt_id(url):
 
 def _kapak(s):
     """Sonuç kartı için kapak görseli (YouTube küçük resim / SC artwork / IA item görseli)."""
+    if s.get("kapak") and "default_avatar" not in str(s.get("kapak")):
+        return s["kapak"]
     k = s.get("kaynak")
     if k == "yt":
         vid = _yt_id(s.get("url"))

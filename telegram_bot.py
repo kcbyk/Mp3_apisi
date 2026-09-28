@@ -186,8 +186,10 @@ def sarki_indir(url, baslik, ilerleme=None, zaman_limiti=240, kanal=""):
         fname = f"{base} ({i}).mp3"
     stem = fname[:-4]
 
+    ff = ffmpeg_yol()
     cmd = [
         "yt-dlp",
+        *( ["--ffmpeg-location", ff] if ff else [] ),
         "-f", "bestaudio/best",
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
         "--no-playlist", "--retries", "3", "--socket-timeout", "20",
@@ -474,37 +476,77 @@ def sc_fast_indir(s, ilerleme=None):
 
 # --------------------------- YouTube (loader.to scraping) ---------------------------
 
-def yt_hizli_ara(q, adet=12):
-    """youtube-search kutuphanesi ile YouTube aramasi (~0.5-1 sn, API anahtari gerekmez).
-    Bizim sonuc formatimiza cevirir; hata/sonuc yoksa bos liste dondurur (yt-dlp'e duser)."""
+def yt_innertube_ara(q, adet=12):
+    """YouTube InnerTube JSON API (~0.3-0.5 sn, sifir hata, gercek HD kapaklar)."""
     try:
-        from youtube_search import YoutubeSearch
-        sonuc = YoutubeSearch(q, max_results=adet).to_dict()
+        url = "https://www.youtube.com/youtubei/v1/search"
+        payload = {
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": "2.20240101.00.00",
+                    "hl": "tr",
+                    "gl": "TR"
+                }
+            },
+            "query": q
+        }
+        r = HTTP_SESSION.post(url, json=payload, timeout=8)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        out = []
+        contents = (data.get("contents", {})
+                        .get("twoColumnSearchResultsRenderer", {})
+                        .get("primaryContents", {})
+                        .get("sectionListRenderer", {})
+                        .get("contents", []))
+        for sec in contents:
+            for item in sec.get("itemSectionRenderer", {}).get("contents", []):
+                vr = item.get("videoRenderer")
+                if not vr:
+                    continue
+                vid = vr.get("videoId")
+                if not vid:
+                    continue
+                title = "".join(r.get("text", "") for r in vr.get("title", {}).get("runs", [])) or "Bilinmeyen"
+                channel = "".join(r.get("text", "") for r in vr.get("ownerText", {}).get("runs", []))
+                length_text = vr.get("lengthText", {}).get("simpleText", "0:00")
+                sure = 0
+                try:
+                    parca = [int(x) for x in length_text.split(":")]
+                    sure = sum(p * 60 ** i for i, p in enumerate(reversed(parca)))
+                except Exception:
+                    sure = 0
+                thumb = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                thumbs = vr.get("thumbnail", {}).get("thumbnails", [])
+                if thumbs:
+                    thumb = thumbs[-1].get("url", thumb)
+                out.append({
+                    "kaynak": "yt",
+                    "url": f"https://www.youtube.com/watch?v={vid}",
+                    "baslik": title,
+                    "kanal": channel,
+                    "sure": sure,
+                    "kapak": thumb
+                })
+                if len(out) >= adet:
+                    return out
+        return out
     except Exception as ex:
-        print("[yt_hizli_ara] hata:", str(ex)[:80], flush=True)
+        print("[yt_innertube] hata:", str(ex)[:80], flush=True)
         return []
-    out = []
-    for e in sonuc or []:
-        vid = e.get("id") or ""
-        if not vid:
-            continue
-        sure = 0
-        try:
-            parca = [int(x) for x in str(e.get("duration") or "0:0").split(":")]
-            sure = sum(p * 60 ** i for i, p in enumerate(reversed(parca)))
-        except Exception:
-            pass
-        out.append({"kaynak": "yt", "url": f"https://www.youtube.com/watch?v={vid}",
-                    "baslik": e.get("title") or "Bilinmeyen",
-                    "kanal": e.get("channel") or "", "sure": sure})
-    return out
+
+
+def yt_hizli_ara(q, adet=12):
+    return yt_innertube_ara(q, adet)
 
 
 def yt_ara_katman(q, adet=12):
-    """YouTube arama katmani: once youtube-search kutuphanesi (hizli),
+    """YouTube arama katmani: once InnerTube API (hizli, HD kapakli),
     bos donerse yt-dlp flat arama (yedek)."""
     try:
-        hizli = yt_hizli_ara(q, adet)
+        hizli = yt_innertube_ara(q, adet)
         if hizli:
             return hizli
     except Exception:
@@ -1170,45 +1212,76 @@ def _resim_boyut(data):
         return None
 
 
-def _kapak_itunes(q):
-    try:
-        r = HTTP_SESSION.get("https://itunes.apple.com/search",
-                         params={"term": q, "entity": "song", "limit": 1},
-                         headers=ARA_HTTP, timeout=15)
-        sonuc = (r.json().get("results") or [])
-        if not sonuc:
-            return None
-        s = sonuc[0]
-        u = (s.get("artworkUrl100") or "").replace("100x100bb", "3000x3000bb")
-        if not u:
-            return None
-        return {"url": u, "sanatci": s.get("artistName") or "",
-                "album": s.get("collectionName") or "", "baslik": s.get("trackName") or "",
-                "kaynak": "itunes", "not_": "orijinal cozunurluge kadar (1500px+)"}
-    except Exception as ex:
-        print("[kapak] itunes:", str(ex)[:60], flush=True)
-        return None
+def _kelime_kumesi(txt):
+    return set(re.findall(r"\w+", str(txt).lower()))
 
 
 def _kapak_deezer(q):
+    """Deezer API — 1000px HD orijinal album kapagi (akilli kelime eslestirmeli)."""
     try:
-        hedef = "https://api.deezer.com/search?q=" + urllib.parse.quote(q) + "&limit=1"
-        r = HTTP_SESSION.get("https://r.jina.ai/" + hedef,
-                         headers={"User-Agent": ARA_HTTP["User-Agent"]}, timeout=30)
-        idx = r.text.find("{")
-        if idx < 0:
+        r = HTTP_SESSION.get("https://api.deezer.com/search",
+                             params={"q": q, "limit": 8},
+                             headers=ARA_HTTP, timeout=6).json()
+        items = r.get("data", [])
+        if not items:
             return None
-        d, _ = json.JSONDecoder().raw_decode(r.text[idx:])
-        s = ((d.get("data") or [{}])[0])
-        alb = s.get("album") or {}
-        u = alb.get("cover_xl") or alb.get("cover_big")
-        if not u:
-            return None
-        return {"url": u, "sanatci": (s.get("artist") or {}).get("name") or "",
-                "album": alb.get("title") or "", "baslik": s.get("title") or "",
-                "kaynak": "deezer", "not_": "1000px"}
+        q_words = _kelime_kumesi(q)
+        scored = []
+        for it in items:
+            art = (it.get("artist") or {}).get("name", "")
+            trk = it.get("title", "")
+            alb = it.get("album") or {}
+            cand_words = _kelime_kumesi(art + " " + trk)
+            inter = len(q_words & cand_words)
+            score = inter / max(1, len(q_words))
+            u = alb.get("cover_xl") or alb.get("cover_big") or alb.get("cover_medium")
+            if u:
+                scored.append((score, {
+                    "url": u,
+                    "sanatci": art,
+                    "album": alb.get("title") or "",
+                    "baslik": trk,
+                    "kaynak": "deezer",
+                    "not_": "1000px orijinal Deezer cover"
+                }))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[0][1] if scored and scored[0][0] >= 0.3 else (scored[0][1] if scored else None)
     except Exception as ex:
         print("[kapak] deezer:", str(ex)[:60], flush=True)
+        return None
+
+
+def _kapak_itunes(q):
+    """iTunes Search API — 1500px+ Apple Music kapagi (akilli kelime eslestirmeli)."""
+    try:
+        r = HTTP_SESSION.get("https://itunes.apple.com/search",
+                             params={"term": q, "entity": "song", "limit": 8},
+                             headers=ARA_HTTP, timeout=6).json()
+        items = r.get("results", [])
+        if not items:
+            return None
+        q_words = _kelime_kumesi(q)
+        scored = []
+        for it in items:
+            art = it.get("artistName", "")
+            trk = it.get("trackName", "")
+            cand_words = _kelime_kumesi(art + " " + trk)
+            inter = len(q_words & cand_words)
+            score = inter / max(1, len(q_words))
+            u = (it.get("artworkUrl100") or "").replace("100x100bb", "3000x3000bb")
+            if u:
+                scored.append((score, {
+                    "url": u,
+                    "sanatci": art,
+                    "album": it.get("collectionName") or "",
+                    "baslik": trk,
+                    "kaynak": "itunes",
+                    "not_": "1500px+ Apple Music"
+                }))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[0][1] if scored and scored[0][0] >= 0.3 else None
+    except Exception as ex:
+        print("[kapak] itunes:", str(ex)[:60], flush=True)
         return None
 
 
@@ -1246,36 +1319,35 @@ def _kapak_caa(q):
 
 def _kapak_yt(q):
     try:
-        from youtube_search import YoutubeSearch
-        sonuc = YoutubeSearch(q, max_results=1).to_dict()
+        sonuc = yt_innertube_ara(q, 1)
         if not sonuc:
             return None
-        vid = sonuc[0].get("id")
+        item = sonuc[0]
+        vid = item.get("url", "").split("v=")[-1].split("&")[0]
         if not vid:
             return None
         return {"url": f"https://i.ytimg.com/vi/{vid}/maxresdefault.jpg",
                 "yedek": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
-                "sanatci": sonuc[0].get("channel") or "",
-                "album": "", "baslik": sonuc[0].get("title") or "",
-                "kaynak": "youtube (video karesi)", "not_": "album kapagi degil, video karesi"}
+                "sanatci": item.get("kanal") or "",
+                "album": "", "baslik": item.get("baslik") or "",
+                "kaynak": "youtube (video karesi)", "not_": "video karesi"}
     except Exception as ex:
         print("[kapak] yt:", str(ex)[:60], flush=True)
         return None
 
 
 def kapak_bul(q):
-    """Album kapagi bul: iTunes (hizli) -> Deezer (1000px) -> Cover Art Archive
-    (orijinal tarama) -> YouTube karesi (son care). Kapak indirilip gercek boyutu
-    dogrulanir. Donen: (veri, hata)"""
+    """Album kapagi bul: Deezer (1000px HD) -> iTunes (1500px+) -> Cover Art Archive -> YouTube karesi.
+    Kapak indirilip gercek boyutu dogrulanir. Donen: (veri, hata)"""
     import time as _t
     t0 = _t.time()
-    for adim in (_kapak_itunes, _kapak_deezer, _kapak_caa, _kapak_yt):
+    for adim in (_kapak_deezer, _kapak_itunes, _kapak_caa, _kapak_yt):
         ad = adim(q)
         if not ad:
             continue
         for u in [ad["url"]] + ([ad["yedek"]] if ad.get("yedek") else []):
             try:
-                rr = HTTP_SESSION.get(u, headers=ARA_HTTP, timeout=25)
+                rr = HTTP_SESSION.get(u, headers=ARA_HTTP, timeout=10)
                 if rr.status_code != 200 or len(rr.content) < 3000:
                     continue
                 boy = _resim_boyut(rr.content)
@@ -1412,7 +1484,7 @@ def yt_video_indir(url, baslik, ilerleme=None, sure=0, kalite="720"):
 
 
 def yt_indir(url, baslik, ilerleme=None, sure=0, kalite="320"):
-    """YouTube -> mp3 (varsayilan 320kbps; kalite 128/192/320). Once ruvs.in (hizli), yedek loader.to. Pre-warm destegi."""
+    """YouTube -> mp3 (varsayilan 320kbps; kalite 128/192/320). Once ruvs.in (hizli), yedek yerel yt-dlp + ffmpeg."""
     dl = None
     pw = PREWARM.get(url)
     if pw and time.time() - pw["t"] < PREWARM_TTL and str(kalite) == "320":
@@ -1420,44 +1492,44 @@ def yt_indir(url, baslik, ilerleme=None, sure=0, kalite="320"):
             dl = pw["dl"]
             if ilerleme:
                 ilerleme(50, "⚡ Önceden hazırlandı — direkt iniyor!")
-        elif pw.get("purl"):
-            dl = _loader_bekle(pw["purl"], ilerleme, onden=True)
     if not dl:
         dl = _yt_dl_url_bul(url, ilerleme, kalite)
-    if not dl:
-        return None, "Dönüştürme çok uzun sürdü."
-    if pw is not None:
-        pw["dl"] = dl
 
-    base = temizle_ad(baslik)
-    fname, i = f"{base}.mp3", 1
-    while (MUZIK / fname).exists():
-        i += 1
-        fname = f"{base} ({i}).mp3"
-    try:
-        with HTTP_SESSION.get(dl, headers=ARA_HTTP, timeout=(15, 60), stream=True) as rr:
-            rr.raise_for_status()
-            tot = int(rr.headers.get("content-length") or 0)
-            done, ind_t = 0, time.time()
-            with open(MUZIK / fname, "wb") as fh:
-                for chunk in rr.iter_content(1048576):
-                    fh.write(chunk)
-                    done += len(chunk)
-                    if done > 48 * 1024 * 1024:
-                        raise RuntimeError("Dosya 48MB'ı aştı.")
-                    if ilerleme:
-                        pct = 60 + int(done / tot * 38) if tot else None
-                        ilerleme(pct, f"⏬ {done/1048576:.1f}" + (f"/{tot/1048576:.1f} MB" if tot else " MB")
-                                 + f" • {int(time.time()-ind_t)} sn")
-    except Exception as ex:
+    if dl:
+        if pw is not None:
+            pw["dl"] = dl
+        base = temizle_ad(baslik)
+        fname, i = f"{base}.mp3", 1
+        while (MUZIK / fname).exists():
+            i += 1
+            fname = f"{base} ({i}).mp3"
         try:
-            (MUZIK / fname).unlink()
-        except Exception:
-            pass
-        return None, f"İndirme hatası: {str(ex)[:80]}"
+            with HTTP_SESSION.get(dl, headers=ARA_HTTP, timeout=(15, 60), stream=True) as rr:
+                rr.raise_for_status()
+                tot = int(rr.headers.get("content-length") or 0)
+                done, ind_t = 0, time.time()
+                with open(MUZIK / fname, "wb") as fh:
+                    for chunk in rr.iter_content(1048576):
+                        fh.write(chunk)
+                        done += len(chunk)
+                        if done > 48 * 1024 * 1024:
+                            raise RuntimeError("Dosya 48MB'ı aştı.")
+                        if ilerleme:
+                            pct = 60 + int(done / tot * 38) if tot else None
+                            ilerleme(pct, f"⏬ {done/1048576:.1f}" + (f"/{tot/1048576:.1f} MB" if tot else " MB")
+                                     + f" • {int(time.time()-ind_t)} sn")
+            kayit_ekle(fname, baslik, "YouTube", url, sure or mp3_sure(MUZIK / fname, sure))
+            return fname, None
+        except Exception as ex:
+            try:
+                (MUZIK / fname).unlink()
+            except Exception:
+                pass
 
-    kayit_ekle(fname, baslik, "YouTube (loader.to)", url, sure or mp3_sure(MUZIK / fname))
-    return fname, None
+    # Bulut motoru olmadiysa -> Guvenli, garantili ve hizli yerel yt-dlp + ffmpeg motoru
+    if ilerleme:
+        ilerleme(40, "⚡ Yerel motorla MP3'e dönüştürülüyor...")
+    return sarki_indir(url, baslik, ilerleme, kanal="YouTube")
 
 def welcome(chat_id):
     tg("sendMessage", chat_id=chat_id, parse_mode="HTML", text=(

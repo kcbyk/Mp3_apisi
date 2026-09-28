@@ -84,10 +84,13 @@ def ara(q, limit=8, kaynaklar=None):
                 toplam[k] = []
     yt, sc, ia = toplam.get("yt", []), toplam.get("sc", []), toplam.get("ia", [])
     birlesik = []
-    for i in range(max(len(yt), len(sc), len(ia))):
-        for src in (yt, sc, ia):
-            if i < len(src):
-                birlesik.append(src[i])
+    for i in range(max(len(yt), len(sc))):
+        if i < len(yt):
+            birlesik.append(yt[i])
+        if i < len(sc):
+            birlesik.append(sc[i])
+    for item in ia:
+        birlesik.append(item)
     sonuc = birlesik[:limit]
 
     if sonuc:  # bos sonuclar onbelleklenmez
