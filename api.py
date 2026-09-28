@@ -525,11 +525,14 @@ def download_stream_ep():
     url_fname = urllib.parse.quote(f"{baslik}.{uzanti}")
 
     def generate():
-        with core.HTTP_SESSION.get(direct, headers=core.ARA_HTTP, stream=True, timeout=(15, 90)) as r:
-            r.raise_for_status()
-            for chunk in r.iter_content(chunk_size=524288):
-                if chunk:
-                    yield chunk
+        try:
+            with core.HTTP_SESSION.get(direct, stream=True, timeout=(15, 90)) as r:
+                r.raise_for_status()
+                for chunk in r.iter_content(chunk_size=524288):
+                    if chunk:
+                        yield chunk
+        except Exception as ex:
+            print("[download_stream] hata:", str(ex)[:80], flush=True)
 
     return Response(
         stream_with_context(generate()),
