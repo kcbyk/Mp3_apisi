@@ -164,6 +164,10 @@ def link_coz(item, fmt="mp3", kalite="320"):
         sid = item.get("id") or item.get("saavn_id")
         u = core.saavn_320k_link(sid) if sid else None
         return (u, None) if u else (None, "JioSaavn CDN linki alınamadı")
+    if k == "audius":
+        aid = item.get("id") or item.get("audius_id")
+        u = core.audius_stream_url(aid) if aid else None
+        return (u, None) if u else (None, "Audius CDN linki alınamadı")
     if k == "ia":
         u = core.archive_direct_url(item.get("ia_id"), item.get("baslik", ""))
         return (u, None) if u else (None, "Arşiv linki alınamadı")

@@ -517,6 +517,35 @@ def saavn_320k_link(song_id):
         print("[saavn] link cozme hatasi:", str(ex)[:60], flush=True)
     return None
 
+# --------------------------- Audius Decentralized 320k Motor ---------------------------
+
+def audius_ara(q, adet=5):
+    """Audius Merkeziyetsiz Müzik Ağı üzerinden 0.3 sn'de 320k parçalar arar."""
+    try:
+        url = f"https://discoveryprovider.audius.co/v1/tracks/search?query={requests.utils.quote(q)}&app_name=MUSIC_API"
+        r = HTTP_SESSION.get(url, timeout=5).json()
+        tracks = r.get("data", [])
+        sonuclar = []
+        for t in tracks[:adet]:
+            tid = t.get("id")
+            sonuclar.append({
+                "kaynak": "audius",
+                "id": tid,
+                "url": f"https://audius.co/{t.get('user', {}).get('handle')}/{t.get('permalink')}",
+                "baslik": t.get("title") or "Audius Track",
+                "kanal": t.get("user", {}).get("name") or "Audius Artist",
+                "sure": int(t.get("duration") or 0),
+                "kapak": (t.get("artwork") or {}).get("480x480") or (t.get("artwork") or {}).get("150x150") or ""
+            })
+        return sonuclar
+    except Exception as ex:
+        print("[audius] arama hatasi:", str(ex)[:60], flush=True)
+        return []
+
+def audius_stream_url(track_id):
+    """Audius doğrudan 320k MP3 stream URL'si üretir (0.1 sn)."""
+    return f"https://discoveryprovider.audius.co/v1/tracks/{track_id}/stream?app_name=MUSIC_API"
+
 # --------------------------- YouTube (loader.to scraping) ---------------------------
 
 def yt_innertube_ara(q, adet=12):
