@@ -445,6 +445,17 @@ def _oynatma_sec(args, fmt):
     sonuc = api_core.ara(q, 10, kaynaklar=izin)
     if fmt == "mp4":
         sonuc = [s for s in sonuc if s.get("kaynak") == "yt"]
+    else:
+        # MP3 için öncelik: Anında 0.3s CDN akışı veren kaynaklar (SC, Saavn, Audius) önce gelsin
+        def _hiz_sirasi(s):
+            k = s.get("kaynak")
+            if k in ("sc", "saavn", "audius"):
+                return 0
+            if k == "yt":
+                return 1
+            return 2
+        sonuc.sort(key=_hiz_sirasi)
+
     sonuc = [s for s in sonuc if DI_KOD.get(s.get("kaynak")) in g.izin]
     if not sonuc:
         return None, _hata("Sonuç bulunamadı" + (" (video için YouTube gerekir)" if fmt == "mp4" else ""), 404)
