@@ -502,7 +502,7 @@ def stream_ep():
 @app.get("/api/v1/download")
 @korumali
 def download_stream_ep():
-    """Ultra hızlı indirme: Çözülen sesi sunucu diskine yazmadan doğrudan kullanıcıya aktarır (streaming pipe)."""
+    """Ultra hızlı indirme: Çözülen medya linkine 302 yönlendirme yaparak doğrudan CDN üzerinden maksimum hızda indirir."""
     fmt = _format_al(request.args, None)
     kalite = _kalite_al(request.args, None, fmt)
     if fmt is None:
@@ -517,31 +517,7 @@ def download_stream_ep():
     direct, hata = api_core.link_coz_cached(item, fmt, kalite)
     if not direct:
         return _hata(hata or "link çözülemedi", 502)
-
-    baslik = core.temizle_ad(item.get("baslik") or "sarki")
-    uzanti = "mp4" if fmt == "mp4" else "mp3"
-    mime = "video/mp4" if fmt == "mp4" else "audio/mpeg"
-    ascii_fname = "".join(c for c in baslik if c.isalnum() or c in " -_.").strip() or "audio"
-    url_fname = urllib.parse.quote(f"{baslik}.{uzanti}")
-
-    def generate():
-        try:
-            with core.HTTP_SESSION.get(direct, stream=True, timeout=(15, 90)) as r:
-                r.raise_for_status()
-                for chunk in r.iter_content(chunk_size=524288):
-                    if chunk:
-                        yield chunk
-        except Exception as ex:
-            print("[download_stream] hata:", str(ex)[:80], flush=True)
-
-    return Response(
-        stream_with_context(generate()),
-        headers={
-            "Content-Disposition": f'attachment; filename="{ascii_fname}.{uzanti}"; filename*=UTF-8\'\'{url_fname}',
-            "Content-Type": mime,
-            "Accept-Ranges": "bytes"
-        }
-    )
+    return redirect(direct, code=302)
 
 
 @app.get("/api/v1/sozler")
