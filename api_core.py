@@ -19,6 +19,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import telegram_bot as core
 
+# Core fonksiyonlarını api_core dışa aktarımı
+sarki_indir = core.sarki_indir
+yt_indir = core.yt_indir
+
 jobs = {}  # job_id -> durum bilgisi
 
 # ------------------- AYARLAR (env ile oynanabilir) -------------------

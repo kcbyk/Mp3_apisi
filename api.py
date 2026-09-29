@@ -510,6 +510,7 @@ def stream_ep():
     # Direkt CDN yoksa -> Lokal streaming
     url = item.get("url")
     baslik = item.get("baslik") or "sarki"
+    indirme_hatasi = None
     if url:
         dosya, indirme_hatasi = api_core.sarki_indir(url, baslik=baslik)
         if dosya:
@@ -521,7 +522,7 @@ def stream_ep():
                     download_name=dosya,
                     mimetype="audio/mpeg"
                 )
-    return _hata(hata or "link çözülemedi", 502)
+    return _hata(hata or indirme_hatasi or "link çözülemedi", 502)
 
 
 @app.get("/api/v1/download-stream")
@@ -549,6 +550,7 @@ def download_stream_ep():
     # 2. Hızlı CDN yoksa -> Garantili Lokal İndirme Motoru (YouTube 320k)
     url = item.get("url")
     baslik = item.get("baslik") or "sarki"
+    indirme_hatasi = None
     if url:
         dosya, indirme_hatasi = api_core.sarki_indir(url, baslik=baslik)
         if dosya:
