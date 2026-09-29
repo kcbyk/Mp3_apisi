@@ -733,16 +733,20 @@ def _ruvs_baslat(url, kalite="320", fmt="mp3"):
     global _ruvs_engelli_kadar
     if time.time() < _ruvs_engelli_kadar:
         return None
-    h = dict(ARA_HTTP)
-    h.update({"Origin": "https://www.ruvs.in", "Content-Type": "application/json",
-              "Referer": "https://www.ruvs.in/tools/youtube/mp3-converter"})
+    h = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Origin": "https://www.ruvs.in",
+        "Content-Type": "application/json",
+        "Referer": "https://www.ruvs.in/tools/youtube/mp3-converter",
+        "Accept": "application/json, text/plain, */*"
+    }
     try:
-        r = HTTP_SESSION.post("https://www.ruvs.in/api/convert",
-                              data=json.dumps({"url": url, "format": fmt, "quality": str(kalite)}),
-                              headers=h, timeout=12)
+        r = requests.post("https://www.ruvs.in/api/convert",
+                          json={"url": url, "format": fmt, "quality": str(kalite)},
+                          headers=h, timeout=12)
         if r.status_code == 429:
-            _ruvs_engelli_kadar = time.time() + 60
-            print("[ruvs] rate limit (429) alindi, 60 sn beklemeye gecildi", flush=True)
+            _ruvs_engelli_kadar = time.time() + 30
+            print("[ruvs] rate limit (429) alindi, 30 sn beklemeye gecildi", flush=True)
             return None
         data = r.json()
         if data.get("job_id"):
@@ -753,17 +757,20 @@ def _ruvs_baslat(url, kalite="320", fmt="mp3"):
 
 def _ruvs_bekle(jid, ilerleme=None):
     """ruvs.in isini poll eder; download_url dondurur (adaptif hizli polling ile 0.8-3 sn)."""
-    h = dict(ARA_HTTP)
-    h.update({"Referer": "https://www.ruvs.in/"})
+    h = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://www.ruvs.in/",
+        "Accept": "application/json, text/plain, */*"
+    }
     t0 = time.time()
-    beklemeler = [0.25, 0.4, 0.6, 0.8, 1.0, 1.2, 1.5, 2.0]
+    beklemeler = [0.3, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0]
     idx = 0
     while time.time() - t0 < 70:
         uyku = beklemeler[idx] if idx < len(beklemeler) else 1.5
         idx += 1
         time.sleep(uyku)
         try:
-            c = HTTP_SESSION.get(f"https://www.ruvs.in/api/check?job_id={jid}", headers=h, timeout=10).json()
+            c = requests.get(f"https://www.ruvs.in/api/check?job_id={jid}", headers=h, timeout=10).json()
         except Exception:
             continue
         if c.get("status") == "completed" and c.get("download_url"):
