@@ -660,18 +660,19 @@ PREWARM_TTL = 600   # 10 dk
 
 def _loader_baslat(url, fmt="mp3"):
     """savenow / loader v2 API motoru (video-download-api.com) ile dönüştürme başlatır."""
-    h = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-         "Referer": "https://y2down.cc/", "Accept": "application/json, */*"}
-    # Format mapping:
+    h = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://y2down.cc/",
+        "Accept": "application/json, */*"
+    }
     f_val = "mp3" if fmt in ("mp3", "audio", "320", "128") else str(fmt)
     try:
         r = HTTP_SESSION.get("https://p.savenow.to/api/v2/download",
-                             params={"format": f_val, "url": url}, headers=h, timeout=15).json()
+                             params={"format": f_val, "url": url}, headers=h, timeout=12).json()
     except Exception as ex:
-        # Fallback to loader.to
         try:
             r = HTTP_SESSION.get("https://loader.to/ajax/download.php",
-                                 params={"format": f_val, "url": url}, headers=h, timeout=15).json()
+                                 params={"format": f_val, "url": url}, headers=h, timeout=12).json()
         except Exception:
             return None, str(ex)[:60]
     if r.get("success") and r.get("progress_url"):
@@ -680,13 +681,16 @@ def _loader_baslat(url, fmt="mp3"):
 
 def _loader_bekle(purl, ilerleme=None, onden=False):
     """savenow/loader progress_url'i poll eder; download_url dondurur."""
-    h = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "application/json, */*"}
+    h = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://y2down.cc/",
+        "Accept": "application/json, */*"
+    }
     t0 = time.time()
-    son_prog, prog_t = None, time.time()
-    beklemeler = [0.4, 0.6, 0.8, 1.0, 1.5, 2.0]
+    beklemeler = [0.8, 1.0, 1.2, 1.5, 2.0]
     idx = 0
-    while time.time() - t0 < 90:
-        uyku = (0.8 if onden else beklemeler[idx] if idx < len(beklemeler) else 1.5)
+    while time.time() - t0 < 60:
+        uyku = beklemeler[idx] if idx < len(beklemeler) else 1.5
         idx += 1
         time.sleep(uyku)
         try:
@@ -696,13 +700,8 @@ def _loader_bekle(purl, ilerleme=None, onden=False):
         gecen = int(time.time() - t0)
         prog = int(p.get("progress") or 0)
         if ilerleme:
-            ilk = "Dönüşüm önden başladı, sürüyor" if onden else "YouTube'da mp3'e çevriliyor"
-            ilerleme(max(2, min(60, prog // 10)), f"🔄 {ilk}... {gecen} sn")
-        if prog != son_prog:
-            son_prog, prog_t = prog, time.time()
-        elif time.time() - prog_t > 30 and prog < 1000:
-            return None
-        if p.get("download_url") and (p.get("success") or prog >= 1000):
+            ilerleme(max(2, min(80, prog // 10)), f"🔄 YouTube'da MP3'e çevriliyor... {gecen} sn")
+        if p.get("success") == 1 and p.get("download_url"):
             return p["download_url"]
         if p.get("url") and p.get("success"):
             return p["url"]
@@ -840,16 +839,25 @@ def _rapid_ytjar_url_bul(url, timeout=5):
 
 def _yt_dl_url_bul(url, ilerleme=None, kalite="320", fmt="mp3"):
     """0. Öncelik: RapidAPI ytjar Hetzner CDN (0.4s)
-    1. Öncelik: ruvs.in 320k saf MP3 motoru (1.0s)"""
+    1. Öncelik: ruvs.in 320k saf MP3 motoru (1.0s)
+    2. Öncelik: y2down / savenow API v2 motoru (3-6s)"""
     if fmt == "mp3":
         fast_dl = _rapid_ytjar_url_bul(url)
         if fast_dl:
             print(f"[yt] ⚡ rapid-ytjar Hetzner CDN yakalandı (0.4 sn): {fast_dl[:60]}...", flush=True)
             return fast_dl
 
+    # 1. ruvs.in (320k)
     jid = _ruvs_baslat(url, kalite, fmt)
     if jid:
         dl = _ruvs_bekle(jid, ilerleme)
+        if dl:
+            return dl
+
+    # 2. y2down.cc / savenow v2
+    purl, hata = _loader_baslat(url, fmt=(kalite if fmt == "mp4" else "mp3"))
+    if purl:
+        dl = _loader_bekle(purl, ilerleme)
         if dl:
             return dl
 
