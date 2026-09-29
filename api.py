@@ -562,7 +562,7 @@ def download_stream_ep():
                     download_name=dosya,
                     mimetype="audio/mpeg"
                 )
-    return _hata(hata or indirme_hatasi or "İndirme gerçekleştirilemedi", 502)
+    return _hata(indirme_hatasi or hata or "İndirme gerçekleştirilemedi", 502)
 
 
 @app.get("/api/v1/sozler")
