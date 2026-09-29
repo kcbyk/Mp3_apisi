@@ -513,7 +513,9 @@ def stream_ep():
 @app.get("/api/v1/download")
 @korumali
 def download_stream_ep():
-    """Ultra hızlı indirme: Çözülen medya linkine 302 yönlendirme yaparak doğrudan CDN üzerinden maksimum hızda indirir."""
+    """Ultra hızlı ve garantili indirme: 
+    1. Önce hızlı CDN linki (302 Redirect) ile anında indirmeyi dener.
+    2. Hızlı link çözülemezse doğrudan YouTube'dan en yüksek kalitede (320k) indirip dosyayı gönderir."""
     fmt = _format_al(request.args, None)
     kalite = _kalite_al(request.args, None, fmt)
     if fmt is None:
@@ -526,9 +528,24 @@ def download_stream_ep():
     if item.get("kaynak") == "tt":
         kalite = "kaynak"
     direct, hata = api_core.link_coz_cached(item, fmt, kalite)
-    if not direct:
-        return _hata(hata or "link çözülemedi", 502)
-    return redirect(direct, code=302)
+    if direct:
+        return redirect(direct, code=302)
+
+    # 2. Hızlı CDN yoksa -> Garantili Lokal İndirme Motoru (YouTube 320k)
+    url = item.get("url")
+    baslik = item.get("baslik") or "sarki"
+    if url:
+        dosya, indirme_hatasi = api_core.sarki_indir(url, baslik=baslik)
+        if dosya:
+            fpath = MUZIK_KLASORU / dosya
+            if fpath.exists():
+                return send_file(
+                    fpath,
+                    as_attachment=True,
+                    download_name=dosya,
+                    mimetype="audio/mpeg"
+                )
+    return _hata(hata or indirme_hatasi or "İndirme gerçekleştirilemedi", 502)
 
 
 @app.get("/api/v1/sozler")

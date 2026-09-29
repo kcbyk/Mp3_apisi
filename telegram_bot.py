@@ -192,6 +192,7 @@ def sarki_indir(url, baslik, ilerleme=None, zaman_limiti=240, kanal=""):
         *( ["--ffmpeg-location", ff] if ff else [] ),
         "-f", "bestaudio/best",
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
+        "--concurrent-fragments", "4",
         "--no-playlist", "--retries", "3", "--socket-timeout", "20",
         "--newline",
         "--progress-template", "PROG %(progress.downloaded_bytes)s %(progress.total_bytes_estimate)s",
