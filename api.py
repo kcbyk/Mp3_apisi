@@ -530,8 +530,9 @@ def stream_ep():
 @korumali
 def download_stream_ep():
     """Ultra hızlı ve garantili indirme: 
-    1. Önce hızlı CDN linki (302 Redirect) ile anında indirmeyi dener.
-    2. Hızlı link çözülemezse doğrudan YouTube'dan en yüksek kalitede (320k) indirip dosyayı gönderir."""
+    1. ruvs.in veya CDN linki varsa anında 302 yönlendirir.
+    2. savenow / loader linki ise stream olarak Referer ile istemciye aktarır.
+    3. Hızlı link çözülemezse doğrudan yt_indir ile indirip dosyayı gönderir."""
     fmt = _format_al(request.args, None)
     kalite = _kalite_al(request.args, None, fmt)
     if fmt is None:
@@ -545,6 +546,24 @@ def download_stream_ep():
         kalite = "kaynak"
     direct, hata = api_core.link_coz_cached(item, fmt, kalite)
     if direct:
+        # Eğer savenow/loader linki ise HTTP Referer korumalıdır -> sunucudan akıt (proxy stream)
+        if "savenow.to" in direct or "loader.to" in direct:
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Referer": "https://y2down.cc/",
+                    "Accept": "*/*"
+                }
+                resp = _rq.get(direct, headers=headers, stream=True, timeout=45)
+                if resp.status_code == 200:
+                    disposition = f'attachment; filename="{item.get("baslik") or "sarki"}.mp3"'
+                    return Response(
+                        resp.iter_content(chunk_size=65536),
+                        content_type="audio/mpeg",
+                        headers={"Content-Disposition": disposition}
+                    )
+            except Exception:
+                pass
         return redirect(direct, code=302)
 
     # 2. Hızlı CDN yoksa -> Garantili yt_indir Motoru (YouTube 320k)
