@@ -507,14 +507,14 @@ def stream_ep():
     if direct:
         return redirect(direct, code=302)
 
-    # Direkt CDN yoksa -> Lokal streaming
+    # Direkt CDN yoksa -> Lokal streaming (YouTube 320k)
     url = item.get("url")
     baslik = item.get("baslik") or "sarki"
     indirme_hatasi = None
     if url:
         dosya, indirme_hatasi = api_core.sarki_indir(url, baslik=baslik)
         if dosya:
-            fpath = MUZIK_KLASORU / dosya
+            fpath = api_core.core.MUZIK / dosya
             if fpath.exists():
                 return send_file(
                     fpath,
@@ -554,7 +554,7 @@ def download_stream_ep():
     if url:
         dosya, indirme_hatasi = api_core.sarki_indir(url, baslik=baslik)
         if dosya:
-            fpath = MUZIK_KLASORU / dosya
+            fpath = api_core.core.MUZIK / dosya
             if fpath.exists():
                 return send_file(
                     fpath,

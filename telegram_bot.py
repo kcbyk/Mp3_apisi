@@ -187,13 +187,16 @@ def sarki_indir(url, baslik, ilerleme=None, zaman_limiti=240, kanal=""):
     stem = fname[:-4]
 
     ff = ffmpeg_yol()
+    import sys
     cmd = [
-        "yt-dlp",
+        sys.executable, "-m", "yt_dlp",
         *( ["--ffmpeg-location", ff] if ff else [] ),
         "-f", "bestaudio/best",
         "-x", "--audio-format", "mp3", "--audio-quality", "0",
         "--concurrent-fragments", "4",
         "--no-playlist", "--retries", "3", "--socket-timeout", "20",
+        "--extractor-args", "youtube:player_client=android,web",
+        "--geo-bypass",
         "--newline",
         "--progress-template", "PROG %(progress.downloaded_bytes)s %(progress.total_bytes_estimate)s",
         "-o", str(MUZIK / (stem + ".%(ext)s")),
@@ -242,10 +245,10 @@ def sarki_indir(url, baslik, ilerleme=None, zaman_limiti=240, kanal=""):
 
     sure = 0
     try:
-        cikti = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                                "-of", "default=nw=1:nk=1", str(yol)],
-                               capture_output=True, text=True, timeout=15).stdout.strip()
-        sure = int(float(cikti))
+        import mutagen
+        mf = mutagen.File(str(yol))
+        if mf and mf.info and hasattr(mf.info, "length"):
+            sure = int(mf.info.length)
     except Exception:
         pass
 
