@@ -833,22 +833,18 @@ def _rapid_ytjar_url_bul(url, timeout=5):
 
 def _yt_dl_url_bul(url, ilerleme=None, kalite="320", fmt="mp3"):
     """0. Öncelik: RapidAPI ytjar Hetzner CDN (0.4s)
-    1. Öncelik: ruvs.in 320k saf MP3 motoru
-    (Bozuk HTML challenge linkleri dönen loader/savenow kaldırıldı — doğrudan lokal 320k yt-dlp çalışır)"""
+    1. Öncelik: ruvs.in 320k saf MP3 motoru (1.0s)"""
     if fmt == "mp3":
         fast_dl = _rapid_ytjar_url_bul(url)
         if fast_dl:
             print(f"[yt] ⚡ rapid-ytjar Hetzner CDN yakalandı (0.4 sn): {fast_dl[:60]}...", flush=True)
             return fast_dl
 
-    if url not in RUVS_HATA:
-        jid = _ruvs_baslat(url, kalite, fmt)
-        if jid:
-            dl = _ruvs_bekle(jid, ilerleme)
-            if dl:
-                return dl
-        RUVS_HATA.add(url)
-        print("[yt] ruvs olmadi — yerel 320k yt-dlp motoruna geciliyor", flush=True)
+    jid = _ruvs_baslat(url, kalite, fmt)
+    if jid:
+        dl = _ruvs_bekle(jid, ilerleme)
+        if dl:
+            return dl
 
     return None
 
