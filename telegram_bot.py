@@ -893,13 +893,31 @@ def mp4_ses_var_mi(yol):
 
 
 def ffmpeg_yol():
-    """Sistem ffmpeg'i ya da imageio-ffmpeg pip binary'si (Render uyumlu). Yoksa None."""
+    """Sistem ffmpeg'i ya da imageio-ffmpeg binary'sini hazirlayip yt-dlp ile tam uyumlu klasor yolunu dondurur."""
     import shutil
+    import pathlib
+    sistem_ff = shutil.which("ffmpeg")
+    if sistem_ff:
+        return str(pathlib.Path(sistem_ff).parent)
     try:
         import imageio_ffmpeg
-        return shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.exists(exe):
+            bin_dir = pathlib.Path("/tmp/bin")
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            for ad in ("ffmpeg", "ffprobe"):
+                link = bin_dir / ad
+                if not link.exists():
+                    try:
+                        os.symlink(exe, link)
+                    except Exception:
+                        pass
+            if str(bin_dir) not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+            return str(bin_dir)
     except Exception:
-        return shutil.which("ffmpeg")
+        pass
+    return None
 
 
 def _mp4_ses_onar(url, video_yol, ilerleme=None):
