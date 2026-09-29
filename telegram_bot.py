@@ -830,8 +830,8 @@ def _rapid_ytjar_url_bul(url, timeout=5):
 
 def _yt_dl_url_bul(url, ilerleme=None, kalite="320", fmt="mp3"):
     """0. Öncelik: RapidAPI ytjar Hetzner CDN (0.4s)
-    1. Öncelik: ruvs.in motoru
-    2. Öncelik: loader.to motoru"""
+    1. Öncelik: ruvs.in 320k saf MP3 motoru
+    (Bozuk HTML challenge linkleri dönen loader/savenow kaldırıldı — doğrudan lokal 320k yt-dlp çalışır)"""
     if fmt == "mp3":
         fast_dl = _rapid_ytjar_url_bul(url)
         if fast_dl:
@@ -845,11 +845,9 @@ def _yt_dl_url_bul(url, ilerleme=None, kalite="320", fmt="mp3"):
             if dl:
                 return dl
         RUVS_HATA.add(url)
-        print("[yt] ruvs olmadi — loader.to'ya geciliyor", flush=True)
-    purl, hata = _loader_baslat(url, fmt=(kalite if fmt == "mp4" else "mp3"))
-    if not purl:
-        return None
-    return _loader_bekle(purl, ilerleme)
+        print("[yt] ruvs olmadi — yerel 320k yt-dlp motoruna geciliyor", flush=True)
+
+    return None
 
 def mp4_ses_var_mi(yol):
     """MP4 kutu yapisini gezerek ses akisi (hdlr='soun') arar — ffmpeg gerekmez.

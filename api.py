@@ -490,7 +490,7 @@ def link_ep():
 @app.get("/api/v1/stream")
 @korumali
 def stream_ep():
-    """İndirmeden oynatma: 302 yönlendirme → direkt CDN linki.
+    """İndirmeden oynatma: 302 yönlendirme → direkt CDN linki veya lokal streaming.
     <audio src="/api/v1/stream?q=..."> veya <video src=...> ile doğrudan çalar."""
     fmt = _format_al(request.args, None)
     kalite = _kalite_al(request.args, None, fmt)
@@ -504,9 +504,24 @@ def stream_ep():
     if item.get("kaynak") == "tt":
         kalite = "kaynak"
     direct, hata = api_core.link_coz_cached(item, fmt, kalite)
-    if not direct:
-        return _hata(hata or "link çözülemedi", 502)
-    return redirect(direct, code=302)
+    if direct:
+        return redirect(direct, code=302)
+
+    # Direkt CDN yoksa -> Lokal streaming
+    url = item.get("url")
+    baslik = item.get("baslik") or "sarki"
+    if url:
+        dosya, indirme_hatasi = api_core.sarki_indir(url, baslik=baslik)
+        if dosya:
+            fpath = MUZIK_KLASORU / dosya
+            if fpath.exists():
+                return send_file(
+                    fpath,
+                    as_attachment=False,
+                    download_name=dosya,
+                    mimetype="audio/mpeg"
+                )
+    return _hata(hata or "link çözülemedi", 502)
 
 
 @app.get("/api/v1/download-stream")
