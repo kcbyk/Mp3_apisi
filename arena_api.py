@@ -173,6 +173,118 @@ def _gorsel_baytlari(url, cfg, timeout=None):
     return r
 
 
+
+# ============================================================================
+#   YEDEK ÜRETİM: arena-proxy ölü/kotalı ise Pollinations'a DOĞRUDAN gider
+# ============================================================================
+# arena-proxy 429/5xx döndürdüğünde (kota bitti, servis uyuyor, IP engellendi)
+# uç artık hata vermiyor: aynı prompt Pollinations CDN'inde doğrudan üretiliyor.
+# Ücretsiz katman sınırı: IP başına 45 sn'de 1 görsel → aynı prompt 10 dk önbelleğe alınır.
+# POLLINATIONS_TOKEN tanımlıysa kota artar. ARENA_YEDEK=0 ile kapatılabilir.
+_URET_CACHE = {}
+_URET_KILIT = __import__("threading").Lock()
+_ORAN = {"1:1": (1024, 1024), "16:9": (1280, 720), "9:16": (720, 1280),
+         "4:3": (1024, 768), "3:4": (768, 1024), "3:2": (1200, 800), "2:3": (800, 1200),
+         "21:9": (1280, 548)}
+
+
+def _oran_boyut(oran):
+    return _ORAN.get(str(oran or "1:1").strip().replace(" ", ""), (1024, 1024))
+
+
+def _pollinations_url(veri):
+    """Prompt → Pollinations görsel URL'i (üretim linkte, indirme isteğe bağlı)."""
+    import urllib.parse as _u
+    prompt = (veri.get("prompt") or "").strip()
+    stil = (veri.get("style") or "").strip()
+    if stil:
+        prompt += f", {stil}"
+    neg = (veri.get("negative_prompt") or "").strip()
+    if neg:
+        prompt += f" --no {neg}"
+    w, h = _oran_boyut(veri.get("aspect_ratio"))
+    # aynı prompt → aynı seed → aynı görsel (önbellek ve tekrar kullanım için)
+    seed = abs(hash((prompt, w, h))) % 2_000_000_000
+    parametre = {"width": w, "height": h, "nologo": "true", "model": "flux",
+                 "seed": seed, "referrer": "sarki-api"}
+    token = (os.environ.get("POLLINATIONS_TOKEN") or "").strip()
+    if token:
+        parametre["token"] = token
+    return ("https://image.pollinations.ai/prompt/" + _u.quote(prompt[:900])
+            + "?" + _u.urlencode(parametre)), w, h
+
+
+def _pollinations_uret(veri, cfg, t0=None):
+    """Doğrudan üretim. Dönen: (_zenginlestir uyumlu dict, http kodu)."""
+    t0 = t0 or time.time()
+    url, w, h = _pollinations_url(veri)
+    with _URET_KILIT:
+        k = _URET_CACHE.get(url)
+        if k and time.time() - k[0] < 600:
+            cevap = dict(k[1])
+            cevap["execution_time_ms"] = int((time.time() - t0) * 1000)
+            cevap["meta"] = dict(cevap.get("meta") or {}, onbellek=True)
+            return cevap, 200
+    try:
+        r = requests.get(url, timeout=(10, cfg.get("timeout", 150)), stream=True)
+    except Exception as e:
+        return {"success": False, "hata": f"Pollinations'a ulaşılamadı: {e}"}, 502
+    if r.status_code == 200 and str(r.headers.get("content-type", "")).startswith("image"):
+        boyut = len(r.raw.read() or b"")
+        cevap = {
+            "success": True,
+            "image_url": url,
+            "mime_type": r.headers.get("content-type", "image/jpeg"),
+            "bytes": boyut or None,
+            "delivery": "url",
+            "execution_time_ms": int((time.time() - t0) * 1000),
+            "meta": {"provider": "pollinations-direct", "genislik": w, "yukseklik": h},
+        }
+        with _URET_KILIT:
+            if len(_URET_CACHE) > 40:
+                eski = min(_URET_CACHE, key=lambda a: _URET_CACHE[a][0])
+                _URET_CACHE.pop(eski, None)
+            _URET_CACHE[url] = (time.time(), dict(cevap))
+        return cevap, 200
+    # kota / hata mesajını olduğu gibi aktar
+    try:
+        d = r.json()
+    except Exception:
+        d = {}
+    kod = ((d.get("error") or {}).get("code") or "")
+    mesaj = ((d.get("error") or {}).get("message")) or f"Pollinations HTTP {r.status_code}"
+    if kod == "FREE_LIMIT" or r.status_code == 402:
+        mesaj = ("Ücretsiz görsel kotası doldu (IP başına 45 sn'de 1 görsel). "
+                 "45 saniye sonra tekrar dene; kalıcı çözüm için POLLINATIONS_TOKEN ekle.")
+    return {"success": False, "hata": mesaj}, 429 if r.status_code == 402 else 502
+
+
+def _uretim(veri, cfg, asenkron=False):
+    """Tek giriş noktası: önce arena-proxy, olmazsa doğrudan Pollinations.
+    Dönen: (_zenginlestir uyumlu dict, http kodu)."""
+    t0 = time.time()
+    proxy_hata = None
+    if cfg.get("url"):
+        try:
+            cevap, kod = _arena_cagri(veri, cfg, asenkron=asenkron)
+            if kod < 400 and cevap.get("success"):
+                return cevap, kod
+            proxy_hata = (cevap.get("error") or {}).get("message") or cevap.get("hata") or f"HTTP {kod}"
+        except Exception as e:
+            proxy_hata = str(e)
+    else:
+        proxy_hata = "ARENA_API_URL tanımlı değil"
+    if str(os.environ.get("ARENA_YEDEK", "1")).strip() == "0":
+        return {"success": False, "hata": proxy_hata or "üretim başarısız"}, 502
+    cevap, kod = _pollinations_uret(veri, cfg, t0)
+    meta = cevap.setdefault("meta", {})
+    meta["fallback_attempts"] = ["arena-proxy", "pollinations-direct"]
+    meta["proxy_hata"] = str(proxy_hata)[:200]
+    if cevap.get("success"):
+        meta.setdefault("provider", "pollinations-direct")
+    return cevap, kod
+
+
 # ============================ UÇLAR ============================
 
 def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
@@ -233,10 +345,7 @@ def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
         izin_h = _arena_izinli()
         if izin_h:
             return izin_h
-        kurulum_h = _kurulum_eksik()
-        if kurulum_h:
-            return kurulum_h
-
+        # ARENA_API_URL yoksa artık hata değil: doğrudan Pollinations yedeği kullanılır
         d = request.get_json(silent=True) or {}
         prompt = _duzelt((d.get("prompt") or d.get("q") or "").strip())
         if not prompt:
@@ -254,10 +363,7 @@ def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
         asenkron = bool(d.get("async")) or d.get("bekleme") == 0
         cfg = _cfg()
 
-        try:
-            cevap, kod = _arena_cagri(veri, cfg, asenkron=asenkron)
-        except Exception as e:
-            return _hata(str(e), 502)
+        cevap, kod = _uretim(veri, cfg, asenkron=asenkron)
 
         if kod >= 400 or not cevap.get("success"):
             return jsonify({
@@ -290,9 +396,6 @@ def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
         izin_h = _arena_izinli()
         if izin_h:
             return izin_h
-        kurulum_h = _kurulum_eksik()
-        if kurulum_h:
-            return kurulum_h
 
         a = request.args
         prompt = _duzelt((a.get("prompt") or a.get("q") or "").strip())
@@ -312,10 +415,7 @@ def arena_rotalari_ekle(app, korumali, depo, api_key, saglayicilar, di_ad=None):
         asenkron = a.get("bekleme") == "0" or a.get("async") in ("1", "true")
         cfg = _cfg()
 
-        try:
-            cevap, kod = _arena_cagri(veri, cfg, asenkron=asenkron)
-        except Exception as e:
-            return _hata(str(e), 502)
+        cevap, kod = _uretim(veri, cfg, asenkron=asenkron)
 
         if kod >= 400 or not cevap.get("success"):
             return jsonify({

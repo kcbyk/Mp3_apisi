@@ -136,9 +136,40 @@ def oku(url, max_karakter=6000):
 
 
 def web_ara(q, limit=10):
-    """Genel web arama (Google-CSE tarzi) — motor telegram_bot.web_ara.
+    """Genel web arama — ⚡ web_motor (paralel yarış, ~0.2-2 sn).
+    Eski sıralı motor (telegram_bot.web_ara) yalnızca yeni motor hata verirse devreye girer.
     Dönen: (sonuclar, motor_adi)."""
-    return core.web_ara(q, limit)
+    try:
+        import web_motor
+        sonuc, motor, _sn = web_motor.web_ara(q, limit)
+        return sonuc, motor
+    except Exception as ex:
+        print("[web_motor] hata, eski motora düşülüyor:", str(ex)[:120], flush=True)
+        return core.web_ara(q, limit)
+
+
+def gorsel_ara(q, limit=8):
+    """Görsel arama — ⚡ web_motor (Wikimedia / DDG-jina zinciri).
+    Dönen: (gorseller, motor_adi, sure_sn)"""
+    import web_motor
+    return web_motor.gorsel_ara(q, limit)
+
+
+def web_istatistik():
+    """Son aramanın motor/hız bilgisi."""
+    try:
+        import web_motor
+        return web_motor.istatistik()
+    except Exception:
+        return {}
+
+
+def anahtarli_saglayicilar():
+    try:
+        import web_motor
+        return web_motor.anahtarli_var()
+    except Exception:
+        return {}
 
 
 def link_coz(item, fmt="mp3", kalite="320"):

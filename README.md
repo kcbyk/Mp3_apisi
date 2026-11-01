@@ -120,3 +120,88 @@ telegram_bot.py   → indirme motorları (YT/SC/IA) + Telegram botu (ayrı çal�
 ```
 
 > `bot_token.txt` (Telegram) ve `api_key.txt` `.gitignore`'da — asla pushlanmaz.
+
+---
+
+## ⚡ v5 — Web arama hızı, görsel arama ve vizyon (2026-11)
+
+### Ne değişti?
+
+| Konu | Önce | Sonra |
+|---|---|---|
+| `/api/v1/web` süre | 45-70 sn (sıralı zincir, çoğu sorguda **boş**) | **0.2 - 2 sn** (paralel yarış) |
+| Boş sonuç | Türkçe sorgularda sık | Boş dönmez: sorgu sadeleştirilir, sonuç bulunamazsa `uyari` döner |
+| Görsel | Yok | `&gorsel=1` ile aynı yanıtta görseller + `/api/v1/gorsel-ara` |
+| Görsel üretimi | arena-proxy 429 → tamamen ölü | arena-proxy + **doğrudan Pollinations yedeği** |
+| LLM | Sadece metin | **`gorsel` parametresi ile fotoğraf görebiliyor** (`@cf/google/gemma-3-12b-it`) |
+| POST'ta key | Yalnız `?key=` / `X-API-Key` | JSON gövdesinde `{"key": ...}` de kabul ediliyor |
+
+### Yeni dosya: `web_motor.py`
+
+Eski motor (`telegram_bot.web_ara`) motorları **sırayla** deniyordu:
+
+```
+DDG-lite (20s) → jina (35s) → ddgs → Wikipedia (15s)   = 45-70 sn, sık sık boş
+```
+
+Yeni motor (`web_motor.py`) hepsini **paralel** yarıştırır, ilk **alakalı** sonucu veren kazanır
+ve tüm istek için **tek bir bütçe** vardır (`WEB_BUTCE`, varsayılan 4 sn; `WEB_TOPLAM_BUTCE` 6.5 sn).
+
+```
+bing-rss ⭐ 0.15s | bing | wikipedia | google-news | ddg-lite | bing-jina | ddg-jina
+```
+
+- **Alaka puanı**: gelen sonuç sorguyla gerçekten ilgili mi? (veri merkezi IP'lerine servis
+  edilen reklam/çöp sayfaları elenir — bu yüzden bazen "0 sonuç + uyarı" döner, çöp dönmez.)
+- **10 dk önbellek**: aynı sorgu ikinci kez ≈0.001 sn.
+- **Sorgu sadeleştirme**: sonuç yoksa/alakasızsa "kelime kırpa kırpa" tekrar dener.
+
+### 🔑 Kalıcı kalite: anahtarlı sağlayıcı (isteğe bağlı)
+
+Anahtarsız motorlar veri merkezi IP'lerinde zaman zaman kısıtlanıyor. Render →
+Environment'a **birini** eklersen o sağlayıcı ilk sıraya geçer ve kalite kalıcı düzelir:
+
+| Değişken | Sağlayıcı | Ücretsiz kota |
+|---|---|---|
+| `BRAVE_KEY` | Brave Search API | 2.000 sorgu/ay |
+| `SERPER_KEY` | serper.dev (Google) | 2.500 sorgu |
+| `TAVILY_KEY` | Tavily (LLM'e hazır) | 1.000 sorgu/ay |
+| `GOOGLE_CSE_KEY` + `GOOGLE_CSE_CX` | Google Programmable Search | 100/gün |
+
+### Yeni uçlar
+
+```bash
+K=sk-...; B=https://mp3-apisi.onrender.com
+
+# 1) metin + görsel TEK çağrıda (AI asistanları için)
+curl -s "$B/api/v1/web?q=galata%20kulesi&limit=5&gorsel=1&key=$K"
+# → {ok, sonuclar:[...], gorseller:[{baslik, gorsel, kucuk, genislik, yukseklik, site, kaynak}], gorsel_motor}
+
+# 2) sadece görsel arama
+curl -s "$B/api/v1/gorsel-ara?q=kızıl%20tilki&limit=8&key=$K"
+
+# 3) web motoru sağlığı
+curl -s "$B/api/v1/web/durum?key=$K"
+
+# 4) 🖼️ FOTOĞRAF GÖRME (vizyon)
+curl -s "$B/api/v1/sohbet?mesaj=bu%20görselde%20ne%20var&gorsel=https://site.com/foto.jpg&key=$K"
+# → {ok, cevap:"...", gorsel_goruldu:true, model:"@cf/google/gemma-3-12b-it"}
+```
+
+### Yeni ortam değişkenleri (hepsi isteğe bağlı)
+
+| Değişken | Varsayılan | Açıklama |
+|---|---|---|
+| `WEB_BUTCE` | 4 | ilk arama turu için üst süre (sn) |
+| `WEB_TOPLAM_BUTCE` | 6.5 | sadeleştirme dahil toplam tavan (sn) |
+| `WEB_CACHE_TTL` | 600 | arama önbelleği (sn) |
+| `WEB_JINA` | https://r.jina.ai/ | jina reader adresi |
+| `ARENA_YEDEK` | 1 | arena-proxy ölüyse Pollinations'a doğrudan geç |
+| `POLLINATIONS_TOKEN` | — | görsel üretim kotasını artırır |
+
+### Bilinen sınırlar
+
+- **Görsel üretimi** anahtarsız katmanda IP başına 45 sn'de 1 görsel (Pollinations ücretsiz
+  limiti). `POLLINATIONS_TOKEN` veya çalışan bir arena-proxy ile artar.
+- **Vizyon** (`gemma-3-12b-it`) Cloudflare hesabında etkin olmalı; değilse uç otomatik
+  olarak metin modeline düşer ve `uyari` alanında nedenini söyler.

@@ -8,3 +8,13 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -w 2 --threads 8 --timeout 120 -b 0.0.0.0:$PORT api:app
     healthCheckPath: /api/v1/health
+# --- Web arama kalitesi (isteğe bağlı, BİRİ yeterli) ---
+# envVars:
+#   - key: BRAVE_KEY
+#     value: ""            # Brave Search API — ücretsiz 2.000 sorgu/ay
+#   - key: SERPER_KEY
+#     value: ""            # serper.dev (Google) — ücretsiz 2.500 sorgu
+#   - key: TAVILY_KEY
+#     value: ""            # Tavily — ücretsiz 1.000 sorgu/ay
+#   - key: POLLINATIONS_TOKEN
+#     value: ""            # AI görsel üretimi kotası

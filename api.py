@@ -250,8 +250,21 @@ def _hata(mesaj, kod=401):
 
 
 def yetki():
-    """Key doğrula → flask.g.izın'e sağlayıcı seti koyar. Hata cevabı dönerse istek reddedilir."""
-    k = request.args.get("key") or request.headers.get("X-API-Key") or ""
+    """Key doğrula → flask.g.izin'e sağlayıcı seti koyar. Hata cevabı dönerse istek reddedilir.
+
+    Key şu üç yerden okunur (biri yeterli):
+      1) ?key=...          (query string)
+      2) X-API-Key başlığı
+      3) POST gövdesindeki {"key": "..."}  ← frontend'ler en çok bunu kullanıyor
+    """
+    k = (request.args.get("key") or request.headers.get("X-API-Key") or "")
+    if not k and request.method in ("POST", "PUT", "PATCH"):
+        try:
+            govde = request.get_json(silent=True) or {}
+            k = govde.get("key") or govde.get("api_key") or govde.get("apiKey") or ""
+        except Exception:
+            k = ""
+    k = k or ""
     if API_KEY and k == API_KEY:
         g.izin = set(SAGLAYICILAR)
         return None
@@ -289,7 +302,7 @@ def _admin_kontrol():
 
 @app.get("/api/v1/health")
 def health():
-    return jsonify(ok=True, servis="sarki-api", surum="4.9",
+    return jsonify(ok=True, servis="sarki-api", surum="5.0",
                    ffmpeg=api_core.ffmpeg_var(),
                    zaman=time.strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -610,7 +623,13 @@ def sozler_ep():
 @app.get("/api/v1/web")
 @korumali
 def web_ep():
-    """Genel web arama (Google-CSE tarzi, anahtarsiz motor zinciri)."""
+    """Genel web arama (Google-CSE tarzı) — ⚡ paralel motor yarışı, ~0.2-2 sn.
+
+    Yeni parametreler:
+      gorsel=1     → sonuçlarla birlikte GÖRSELLER de gelir (AI'ya tek çağrıda metin+görsel)
+      gorsel_limit → kaç görsel (varsayılan 8, en fazla 24)
+      detay=1      → ilk 3 sonucun sayfa metni (RAG paketi)
+    """
     q = (request.args.get("q") or "").strip()
     try:
         limit = int(request.args.get("limit") or 10)
@@ -621,10 +640,47 @@ def web_ep():
     if "web" not in g.izin:
         return _hata("Bu key 'web' sağlayıcısına izinli değil", 403)
     detay = str(request.args.get("detay") or "").lower() in ("1", "true", "evet")
+    gorsel = str(request.args.get("gorsel") or request.args.get("görsel") or "").lower() in (
+        "1", "true", "evet", "on")
+    try:
+        gorsel_limit = int(request.args.get("gorsel_limit") or 8)
+    except ValueError:
+        gorsel_limit = 8
     t0 = time.time()
-    sonuc, motor = api_core.web_ara(q, max(1, min(limit, 20)))
+    limit = max(1, min(limit, 20))
+
+    # görsel araması metin aramasıyla AYNI ANDA başlar (toplam süre = ikisinin uzunu)
+    gorsel_kutu = {}
+    gorsel_hazir = threading.Event()
+
+    def _gorsel_calistir():
+        try:
+            gorsel_kutu["veri"] = api_core.gorsel_ara(q, max(1, min(gorsel_limit, 24)))
+        except Exception as ex:
+            gorsel_kutu["veri"] = ([], "hata", 0)
+            print("[gorsel]", str(ex)[:100], flush=True)
+        finally:
+            gorsel_hazir.set()
+
+    if gorsel:
+        threading.Thread(target=_gorsel_calistir, daemon=True).start()
+
+    sonuc, motor = api_core.web_ara(q, limit)
+
+    gorseller, gorsel_motor = [], None
+    gorsel_tamam = True
+    if gorsel:
+        # görseller için en fazla GORSEL_BEKLE sn bekle — metin araması zaten bitti,
+        # görsel gelmezse isteği bekletmeyiz (istemci /api/v1/gorsel-ara ile ayrıca çeker)
+        try:
+            gorsel_bekle = float(request.args.get("gorsel_bekle") or 2.5)
+        except ValueError:
+            gorsel_bekle = 2.5
+        gorsel_tamam = gorsel_hazir.wait(max(0.2, min(gorsel_bekle, 6.0)))
+        gorseller, gorsel_motor, _gs = gorsel_kutu.get("veri", ([], "yok", 0))
+
     if detay and sonuc:
-        # RAG modu: ilk 3 sonucu paralel oku (jina) -> metin alanini doldur
+        # RAG modu: ilk 3 sonucu paralel oku (jina) -> metin alanını doldur
         kutular = {}
 
         def _cek(i, s):
@@ -643,11 +699,61 @@ def web_ep():
             sonuc[i]["metin"] = v["metin"]
             sonuc[i]["metin_karakter"] = v["karakter"]
             sonuc[i]["metin_kirpildi"] = v["kirpildi"]
-    return jsonify(ok=True, q=q, adet=len(sonuc), motor=motor or "yok", detay=detay,
-                   sure_sn=round(time.time() - t0, 2), sonuclar=sonuc,
-                   not_="DuckDuckGo operatörleri desteklenir: site:, filetype:, intitle:, -hariç"
-                         + (" — detay=1: ilk 3 sonucun sayfa metni dahil (RAG paketi)"
-                            if detay else ""))
+
+    govde = dict(ok=True, q=q, adet=len(sonuc), motor=motor or "yok", detay=detay,
+                 sure_sn=round(time.time() - t0, 2), sonuclar=sonuc,
+                 not_="DuckDuckGo operatörleri desteklenir: site:, filetype:, intitle:, -hariç"
+                      + (" — detay=1: ilk 3 sonucun sayfa metni dahil (RAG paketi)"
+                         if detay else ""))
+    if gorsel:
+        govde["gorseller"] = gorseller
+        govde["gorsel_adet"] = len(gorseller)
+        govde["gorsel_motor"] = gorsel_motor
+        if not gorsel_tamam:
+            govde["gorsel_ipucu"] = (f"/api/v1/gorsel-ara?q={q}&limit={gorsel_limit}"
+                                     " — görseller henüz hazır değil, bu uçtan ayrıca çek "
+                                     "(ya da gorsel_bekle=5 ile daha uzun bekle)")
+    if not sonuc:
+        govde["uyari"] = ("Sonuç bulunamadı: sunucu IP'si arama motorları tarafından "
+                          "kısıtlanmış olabilir. Render → Environment'a BRAVE_KEY, "
+                          "SERPER_KEY veya TAVILY_KEY eklemek kalıcı çözer.")
+    return jsonify(govde)
+
+
+@app.get("/api/v1/gorsel-ara")
+@korumali
+def gorsel_ara_ep():
+    """🖼️ Görsel arama — Wikimedia Commons + DuckDuckGo (jina) zinciri, ~0.7-2.5 sn.
+
+    Sonuç: {baslik, gorsel (tam boy), kucuk (thumbnail), genislik, yukseklik,
+            site (kaynak sayfa), kaynak, lisans, ozet}
+    """
+    q = (request.args.get("q") or request.args.get("sorgu") or "").strip()
+    if not q:
+        return _hata("q parametresi gerekli", 400)
+    if "web" not in g.izin:
+        return _hata("Bu key 'web' sağlayıcısına izinli değil", 403)
+    try:
+        limit = int(request.args.get("limit") or 8)
+    except ValueError:
+        limit = 8
+    t0 = time.time()
+    gorseller, motor, _gs = api_core.gorsel_ara(q, max(1, min(limit, 24)))
+    return jsonify(ok=True, q=q, adet=len(gorseller), motor=motor,
+                   sure_sn=round(time.time() - t0, 2), gorseller=gorseller,
+                   not_="'gorsel' tam boy (paylaşılabilir), 'kucuk' grid/liste için uygundur")
+
+
+@app.get("/api/v1/web/durum")
+@korumali
+def web_durum_ep():
+    """🔍 Web motoru sağlığı: hangi anahtarlı sağlayıcı tanımlı, son çağrı hızı."""
+    if "web" not in g.izin:
+        return _hata("Bu key 'web' sağlayıcısına izinli değil", 403)
+    return jsonify(ok=True, anahtarli=api_core.anahtarli_saglayicilar(),
+                   son=api_core.web_istatistik(),
+                   not_="Anahtarsız zincir: bing-rss → bing → wikipedia → google-news → ddg. "
+                        "Kalıcı kalite için BRAVE_KEY / SERPER_KEY / TAVILY_KEY ekleyin.")
 
 
 @app.get("/api/v1/kapak")
@@ -1053,26 +1159,106 @@ def transkript_ep():
                    kaynak="cf-whisper")
 
 
+def _gorsel_veri_uri(kaynak):
+    """Görsel URL'i veya base64/metin → (data-uri, hata). En fazla 6 MB."""
+    if not kaynak:
+        return None, "görsel boş"
+    k = kaynak.strip()
+    if k.startswith("data:image/"):
+        return k, None
+    if k.startswith(("http://", "https://")):
+        try:
+            r = _rq.get(k, timeout=25, stream=True,
+                        headers={"User-Agent": "Mozilla/5.0 (sarki-api vision)"})
+            if not r.ok:
+                return None, f"görsel indirilemedi (HTTP {r.status_code})"
+            ham = r.raw.read(6 * 1024 * 1024 + 1)
+        except Exception as e:  # noqa: BLE001
+            return None, f"görsel indirilemedi: {e}"
+    else:
+        try:
+            ham = base64.b64decode(k, validate=False)
+        except Exception:
+            return None, "görsel ne URL ne base64 — 'gorsel' alanına https://... veya base64 ver"
+    if len(ham) > 6 * 1024 * 1024:
+        return None, "görsel 6 MB sınırını aşıyor"
+    mime = "image/jpeg"
+    if ham[:8] == b"\x89PNG\r\n\x1a\n":
+        mime = "image/png"
+    elif ham[:4] == b"RIFF" and ham[8:12] == b"WEBP":
+        mime = "image/webp"
+    elif ham[:6] in (b"GIF87a", b"GIF89a"):
+        mime = "image/gif"
+    return f"data:{mime};base64,{base64.b64encode(ham).decode()}", None
+
+
 @app.route("/api/v1/sohbet", methods=["GET", "POST"])
 @korumali
 def sohbet_ep():
-    """Ücretsiz LLM sohbeti (Cloudflare: GLM-4.7 / Llama-3.1; günlük 10K neuron bedava).
-    GET ?mesaj=...&model=glm|llama|micro  veya  POST {"mesaj": "...", "model": "glm"}"""
+    """Ücretsiz LLM sohbeti (Cloudflare Workers AI) — artık GÖRSEL de görebiliyor.
+
+    GET  ?mesaj=...&model=glm|llama|micro|goruntu  [&gorsel=https://...]
+    POST {"mesaj":"...", "model":"glm", "gorsel":"https://... | base64 | data:image/..."}
+
+    model:
+      glm     → @cf/zai-org/glm-4.7-flash          (en iyi Türkçe, ~10-40 sn)
+      llama   → @cf/meta/llama-3.1-8b-instruct-fp8 (hızlı, ~0.7 sn)
+      micro   → @cf/ibm-granite/granite-4.0-h-micro (en hızlı, zayıf akıl yürütme)
+      goruntu → @cf/google/gemma-3-12b-it          (VİZYON: fotoğrafı görür; ~10-25 sn)
+                'gorsel' parametresi verilirse model otomatik buna geçer
+    """
     d = request.get_json(silent=True) or {}
-    mesaj = (request.args.get("mesaj") or d.get("mesaj") or "").strip()
-    model = (request.args.get("model") or d.get("model") or "glm").strip().lower()
+    mesaj = (request.args.get("mesaj") or d.get("mesaj") or d.get("message") or "").strip()
+    model = (request.args.get("model") or d.get("model") or "").strip().lower()
+    gorsel_kaynak = (request.args.get("gorsel") or request.args.get("resim") or d.get("gorsel")
+                     or d.get("image") or d.get("gorsel_url") or "").strip()
+    if not mesaj and gorsel_kaynak:
+        mesaj = "Bu görselde ne var? Ayrıntılı anlat."
     if not mesaj:
         return _hata("mesaj parametresi gerekli", 400)
     if len(mesaj) > 4000:
         return _hata("mesaj en fazla 4000 karakter", 400)
+
     M = {"glm": "@cf/zai-org/glm-4.7-flash",
          "llama": "@cf/meta/llama-3.1-8b-instruct-fp8",
-         "micro": "@cf/ibm-granite/granite-4.0-h-micro"}
+         "micro": "@cf/ibm-granite/granite-4.0-h-micro",
+         "goruntu": "@cf/google/gemma-3-12b-it",
+         "vision": "@cf/google/gemma-3-12b-it",
+         "gemma": "@cf/google/gemma-3-12b-it"}
+    if gorsel_kaynak and model not in ("goruntu", "vision", "gemma"):
+        model = "goruntu"                       # görsel varsa vizyon modeli (aksi halde görmez)
+    if not model:
+        model = "glm"
     mdl = M.get(model, M["glm"])
+    sistem = ("Kısa, samimi, Türkçe konuşan yardımcı bir asistansın. Cevabın 3 paragrafı geçmesin."
+              if mdl != M["goruntu"] else
+              "Türkçe konuşan, görselleri ayrıntılı betimleyen bir asistansın. "
+              "Gördüğünü somut olarak anlat (nesneler, renkler, yazılar, sahne). Uydurma.")
+
+    icerik = mesaj
+    if gorsel_kaynak:
+        veri_uri, hata = _gorsel_veri_uri(gorsel_kaynak)
+        if hata:
+            return _hata(hata, 400)
+        icerik = [{"type": "text", "text": mesaj},
+                  {"type": "image_url", "image_url": {"url": veri_uri}}]
+
     t0 = time.time()
     res, hata = _cf_run(mdl, {"messages": [
-        {"role": "system", "content": "Kısa, samimi, Türkçe konuşan yardımcı bir asistansın. Cevabın 3 paragrafı geçmesin."},
-        {"role": "user", "content": mesaj}]}, 90)
+        {"role": "system", "content": sistem},
+        {"role": "user", "content": icerik}]}, 120)
+    if hata and gorsel_kaynak:
+        # vizyon modeli yoksa/başarısızsa: metin modeline düş, görseli göremediğini söyle
+        res, hata = _cf_run(M["glm"], {"messages": [
+            {"role": "system", "content": sistem},
+            {"role": "user", "content": mesaj}]}, 90)
+        if not hata:
+            return jsonify(ok=True, model=M["glm"], cevap=res.get("response"),
+                           gorsel_goruldu=False,
+                           uyari=("Vizyon modeli kullanılamadı (" + str(hata)[:120] +
+                                  ") — cevap metne göre üretildi. Cloudflare hesabında "
+                                  "@cf/google/gemma-3-12b-it etkin mi kontrol et."),
+                           sure_ms=int((time.time() - t0) * 1000))
     if hata:
         return _hata(f"llm: {hata}", 502)
     cevap = None
@@ -1080,7 +1266,9 @@ def sohbet_ep():
         cevap = res["response"]
     elif res.get("choices"):
         cevap = ((res["choices"][0] or {}).get("message") or {}).get("content")
-    return jsonify(ok=True, model=mdl, cevap=cevap, sure_ms=int((time.time() - t0) * 1000))
+    return jsonify(ok=True, model=mdl, cevap=cevap,
+                   gorsel_goruldu=bool(gorsel_kaynak),
+                   sure_ms=int((time.time() - t0) * 1000))
 
 
 @app.get("/api/v1/oku")
