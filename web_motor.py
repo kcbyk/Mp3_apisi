@@ -54,7 +54,7 @@ from requests.adapters import HTTPAdapter
 # ---------------------------- AYARLAR ----------------------------
 BUTCE = float(os.environ.get("WEB_BUTCE", "4"))          # ilk tur için üst süre (sn)
 TOPLAM_BUTCE = float(os.environ.get("WEB_TOPLAM_BUTCE", "6.5"))  # sadeleştirme dahil tavan
-GORSEL_BUTCE = float(os.environ.get("WEB_GORSEL_BUTCE", "7"))
+GORSEL_BUTCE = float(os.environ.get("WEB_GORSEL_BUTCE", "4.5"))
 EK_PENCERE = float(os.environ.get("WEB_EK_PENCERE", "1.2"))  # ikinci motoru bekleme payı
 CACHE_TTL = int(os.environ.get("WEB_CACHE_TTL", "600"))      # 10 dk
 CACHE_MAX = int(os.environ.get("WEB_CACHE_MAX", "300"))
@@ -741,6 +741,21 @@ def _wikipedia_gorsel(q, limit, timeout, deneme=0):
     return sonuc
 
 
+_SORU_KELIMELERI = {
+    "nerede", "nerede?", "nasıl", "nedir", "kimdir", "kim", "hangi", "neden", "niçin",
+    "ne", "mi", "mı", "mu", "mü", "kaç", "resim", "resmi", "resimleri", "görsel",
+    "görseli", "görselleri", "fotoğraf", "fotoğrafı", "fotoğrafları", "foto", "hakkında",
+    "ile", "ve", "için", "bir", "çok", "en", "güzel", "kaliteli",
+}
+
+
+def _gorsel_sorgu(q):
+    """Görsel aramada soru/bağlaç kelimelerini atar: 'galata kulesi nerede' → 'galata kulesi'."""
+    parcalar = [p for p in re.split(r"\s+", (q or "").strip()) if p]
+    kalan = [p for p in parcalar if p.lower() not in _SORU_KELIMELERI]
+    return " ".join(kalan) if len(kalan) >= 1 else (q or "")
+
+
 GORSEL_MOTORLARI = [
     ("wikimedia", _commons),
     ("duckduckgo", _ddg_gorsel_jina),
@@ -765,9 +780,10 @@ def gorsel_ara(q, limit=8):
         return k[0], k[1] + "+onbellek", 0.001
     t0 = time.time()
     bitis = t0 + GORSEL_BUTCE
-    gorseller, motor, gecen, puan = _yaris(q, limit, GORSEL_MOTORLARI, GORSEL_BUTCE, bitis=bitis)
+    q_gorsel = _gorsel_sorgu(q)
+    gorseller, motor, gecen, puan = _yaris(q_gorsel, limit, GORSEL_MOTORLARI, GORSEL_BUTCE, bitis=bitis)
     if puan < ALAKA_ESIK:
-        for aday in list(_sadelestir(q))[:2]:
+        for aday in list(_sadelestir(q_gorsel))[:2]:
             kalan = min(bitis - time.time(), 2.5)
             if kalan < 1.0:
                 break
