@@ -203,5 +203,6 @@ curl -s "$B/api/v1/sohbet?mesaj=bu%20görselde%20ne%20var&gorsel=https://site.co
 
 - **Görsel üretimi** anahtarsız katmanda IP başına 45 sn'de 1 görsel (Pollinations ücretsiz
   limiti). `POLLINATIONS_TOKEN` veya çalışan bir arena-proxy ile artar.
-- **Vizyon** (`gemma-3-12b-it`) Cloudflare hesabında etkin olmalı; değilse uç otomatik
-  olarak metin modeline düşer ve `uyari` alanında nedenini söyler.
+- **Vizyon**: sırayla `gemma-3-12b-it` → `llama-4-scout-17b-16e-instruct` → `llava-1.5-7b-hf`
+  denenir; hesapta hangisi etkinse o kullanılır. Hiçbiri yoksa uç metin modeline düşer ve
+  yanıtta `gorsel_goruldu:false` + `uyari` + `vizyon_hatalari` döner (fotoğraf GÖRÜLMEDİ).

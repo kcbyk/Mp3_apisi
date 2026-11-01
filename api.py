@@ -1225,6 +1225,10 @@ def sohbet_ep():
          "goruntu": "@cf/google/gemma-3-12b-it",
          "vision": "@cf/google/gemma-3-12b-it",
          "gemma": "@cf/google/gemma-3-12b-it"}
+    # Vizyon modeli zinciri: hesabında hangisi etkinse o kullanılır
+    VIZYON_ZINCIR = ["@cf/google/gemma-3-12b-it",
+                     "@cf/meta/llama-4-scout-17b-16e-instruct",
+                     "@cf/llava-hf/llava-1.5-7b-hf"]
     if gorsel_kaynak and model not in ("goruntu", "vision", "gemma"):
         model = "goruntu"                       # görsel varsa vizyon modeli (aksi halde görmez)
     if not model:
@@ -1243,32 +1247,61 @@ def sohbet_ep():
         icerik = [{"type": "text", "text": mesaj},
                   {"type": "image_url", "image_url": {"url": veri_uri}}]
 
+    def _cevap_ayikla(r):
+        if not isinstance(r, dict):
+            return None
+        if isinstance(r.get("response"), str) and r["response"].strip():
+            return r["response"]
+        if isinstance(r.get("description"), str) and r["description"].strip():
+            return r["description"]          # llava / bazı modeller
+        if r.get("choices"):
+            return ((r["choices"][0] or {}).get("message") or {}).get("content")
+        return None
+
     t0 = time.time()
-    res, hata = _cf_run(mdl, {"messages": [
-        {"role": "system", "content": sistem},
-        {"role": "user", "content": icerik}]}, 120)
-    if hata and gorsel_kaynak:
-        # vizyon modeli yoksa/başarısızsa: metin modeline düş, görseli göremediğini söyle
-        res, hata = _cf_run(M["glm"], {"messages": [
-            {"role": "system", "content": sistem},
-            {"role": "user", "content": mesaj}]}, 90)
-        if not hata:
-            return jsonify(ok=True, model=M["glm"], cevap=res.get("response"),
-                           gorsel_goruldu=False,
-                           uyari=("Vizyon modeli kullanılamadı (" + str(hata)[:120] +
-                                  ") — cevap metne göre üretildi. Cloudflare hesabında "
-                                  "@cf/google/gemma-3-12b-it etkin mi kontrol et."),
-                           sure_ms=int((time.time() - t0) * 1000))
-    if hata:
-        return _hata(f"llm: {hata}", 502)
+    hatalar = []
     cevap = None
-    if isinstance(res.get("response"), str):
-        cevap = res["response"]
-    elif res.get("choices"):
-        cevap = ((res["choices"][0] or {}).get("message") or {}).get("content")
-    return jsonify(ok=True, model=mdl, cevap=cevap,
-                   gorsel_goruldu=bool(gorsel_kaynak),
-                   sure_ms=int((time.time() - t0) * 1000))
+    kullanilan = mdl
+
+    if gorsel_kaynak:
+        # vizyon modeli zinciri: hesapta etkin olan ilk model kullanılır
+        for aday in VIZYON_ZINCIR:
+            res, hata = _cf_run(aday, {"messages": [
+                {"role": "system", "content": sistem},
+                {"role": "user", "content": icerik}]}, 120)
+            if not hata:
+                cevap = _cevap_ayikla(res)
+                if cevap:
+                    kullanilan = aday
+                    break
+            hatalar.append(f"{aday}: {str(hata)[:80]}")
+        if not cevap:
+            # hiçbir vizyon modeli çalışmadı → metin modeline düş
+            res, hata = _cf_run(M["glm"], {"messages": [
+                {"role": "system", "content": sistem},
+                {"role": "user", "content": mesaj}]}, 90)
+            if hata:
+                return _hata(f"llm: {hata}", 502)
+            return jsonify(ok=True, model=M["glm"], cevap=_cevap_ayikla(res),
+                           gorsel_goruldu=False, vizyon_hatalari=hatalar,
+                           uyari=("Görsel modellerin hiçbiri kullanılamadı — cevap metne göre "
+                                  "üretildi (görsel GÖRÜLMEDİ). Cloudflare hesabında "
+                                  "@cf/google/gemma-3-12b-it veya llama-4-scout etkin olmalı."),
+                           sure_ms=int((time.time() - t0) * 1000))
+    else:
+        res, hata = _cf_run(mdl, {"messages": [
+            {"role": "system", "content": sistem},
+            {"role": "user", "content": icerik}]}, 120)
+        if hata:
+            return _hata(f"llm: {hata}", 502)
+        cevap = _cevap_ayikla(res)
+
+    govde = dict(ok=True, model=kullanilan, cevap=cevap,
+                 gorsel_goruldu=bool(gorsel_kaynak and kullanilan in VIZYON_ZINCIR),
+                 sure_ms=int((time.time() - t0) * 1000))
+    if hatalar:
+        govde["vizyon_hatalari"] = hatalar
+    return jsonify(govde)
 
 
 @app.get("/api/v1/oku")

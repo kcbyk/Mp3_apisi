@@ -660,39 +660,50 @@ def _commons(q, limit, timeout, deneme=0):
 
 def _ddg_gorsel_jina(q, limit, timeout, deneme=0):
     """DDG görselleri → jina reader (challenge'ı aşar).
-    Markdown şablonu:  ![Image 1: ALT](THUMB)612 × 408  ### [SAYFA](URL)"""
+    Markdown şablonu:
+        ![Image 1: ALT](THUMB)612 × 408  ### [SAYFA BAŞLIĞI](SAYFA_URL) ... ![Image 2](favicon)
+    Blok blok ayrıştırılır: başlık ve sayfa URL'i `### [..](..)` başlığından alınır
+    (favicon/thumbnail linkleri sayfa URL'i sanılmaz)."""
     hedef = ("https://duckduckgo.com/?q=" + urllib.parse.quote(q) +
              "&iax=images&ia=images&kp=1")
     r = _S.get(JINA + hedef, timeout=(3.5, timeout))
-    desen = re.compile(
-        r'!\[Image \d+(?::\s*([^\]]*))?\]\((https://[^)\s]+)\)\s*(\d+)\s*[×x]\s*(\d+)'
-        r'.{0,400}?\[([^\]]*)\]\((https?://[^)]+)\)', re.S)
+    metin = r.text
+    # her görsel bloğu: "![Image N" ile başlar, bir sonraki "![Image" ile biter
+    parcalar = re.split(r'(?=!\[Image \d+)', metin)
     sonuc, gorulen = [], set()
-    for m in desen.finditer(r.text):
-        alt, thumb, gw, gh, sayfa_baslik, sayfa = m.groups()
-        if not thumb or "external-content.duckduckgo.com/ip3" in thumb:
-            continue                      # favicon
-        # thumbnail içindeki orijinal adresi (u=...) çöz
+    for parca in parcalar[1:]:
+        m = re.match(r'!\[Image \d+:?\s*([^\]]*)\]\((https://[^)\s]+)\)\s*(\d+)\s*[×x]\s*(\d+)', parca)
+        if not m:
+            continue
+        alt, thumb, gw, gh = m.group(1).strip(), m.group(2), m.group(3), m.group(4)
+        if "external-content.duckduckgo.com/ip3" in thumb:
+            continue                                   # favicon
+        # sayfa başlığı + sayfa linki: "### [başlık](url)"
+        bas = re.search(r'#{1,6}\s*\[([^\]]{3,200})\]\((https?://[^)\s]+)\)', parca)
+        sayfa_baslik = _temiz(bas.group(1), 140) if bas else _temiz(alt, 140)
+        sayfa = bas.group(2) if bas else ""
+        if "duckduckgo.com" in sayfa:
+            sayfa = ""
+        # thumbnail içindeki asıl adres (?u=...) → daha büyük sürüm
         ham = thumb
         mu = re.search(r'[?&]u=([^&]+)', thumb)
         if mu:
             ham = urllib.parse.unquote(mu.group(1))
-        w, h = _olcekli_boyut(gw, gh, 1600)
-        buyuk = _buyut(ham, w, h)
         anahtar = ham.split("?")[0]
         if anahtar in gorulen:
             continue
         gorulen.add(anahtar)
+        w, h = _olcekli_boyut(gw, gh, 1600)
         sonuc.append({
-            "baslik": _temiz(sayfa_baslik or alt or "", 140),
-            "gorsel": buyuk,
+            "baslik": sayfa_baslik,
+            "gorsel": _buyut(ham, w, h),
             "kucuk": thumb,
-            "genislik": int(gw) if str(gw).isdigit() else None,
-            "yukseklik": int(gh) if str(gh).isdigit() else None,
+            "genislik": int(gw) if gw.isdigit() else None,
+            "yukseklik": int(gh) if gh.isdigit() else None,
             "site": sayfa,
             "kaynak": "duckduckgo",
             "lisans": "",
-            "ozet": _temiz(alt or "", 200),
+            "ozet": _temiz(alt, 200),
         })
         if len(sonuc) >= limit:
             break
