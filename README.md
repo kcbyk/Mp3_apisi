@@ -206,3 +206,86 @@ curl -s "$B/api/v1/sohbet?mesaj=bu%20görselde%20ne%20var&gorsel=https://site.co
 - **Vizyon**: sırayla `gemma-3-12b-it` → `llama-4-scout-17b-16e-instruct` → `llava-1.5-7b-hf`
   denenir; hesapta hangisi etkinse o kullanılır. Hiçbiri yoksa uç metin modeline düşer ve
   yanıtta `gorsel_goruldu:false` + `uyari` + `vizyon_hatalari` döner (fotoğraf GÖRÜLMEDİ).
+
+---
+
+## 🖼️ v5.1 — `/api/v1/web` artık VARSAYILAN olarak görsel döndürür
+
+Önceki sürümde görseller yalnızca `&gorsel=1` verilince geliyordu ve metin
+sonuçlarında `og:image` alanı **hiç yoktu**. İkisi de düzeltildi.
+
+### Yanıt sözleşmesi (görsel alanları)
+
+**Her metin sonucunda** (sayfanın kendi görseli):
+
+| Alan | Açıklama |
+|---|---|
+| `image_url` | Sayfanın ana görseli (og:image / twitter:image / image_src) |
+| `thumbnail_url` | Küçük görsel (galeri eşleşmesi varsa ondan) |
+| `og_image` | Ham `og:image` değeri |
+| `gorsel_genislik` / `gorsel_yukseklik` | Görsel boyutu (meta'dan) |
+| `fotografci` | `author` / `article:author` / `dc.creator` meta'larından |
+| `gorsel_kaynak` | `og:image` ya da `galeri:<motor>` |
+
+**`gorseller` dizisinde** (fotoğraf galerisi — Wikimedia + DuckDuckGo **harmanı**):
+
+| Alan | Açıklama |
+|---|---|
+| `gorsel` | Tam boy görsel (DDG thumbnail'ları 1600px'e yükseltilir) |
+| `kucuk` | Thumbnail (grid/liste için) |
+| `genislik` / `yukseklik` | Gerçek piksel boyutu |
+| `baslik` | Başlık / alt metni |
+| `site` + `site_domain` | Görselin bulunduğu sayfa ve alan adı |
+| `lisans` | Wikimedia lisansı (CC BY-SA 4.0 gibi) — künye için |
+| `fotografci` | Wikimedia sanatçı/atıf bilgisi |
+| `kaynak` | `wikimedia` · `duckduckgo` · `wikipedia-tr` |
+
+### Örnek
+
+```bash
+curl -s "$B/api/v1/web?q=BMW+M4+photos&detay=1&key=$K"
+```
+
+```json
+{
+  "ok": true, "q": "BMW M4 photos", "motor": "bing-rss",
+  "adet": 10, "gorselli_sonuc": 1,
+  "sonuclar": [{ "baslik": "...", "url": "...", "ozet": "...",
+                 "image_url": "https://...jpg", "thumbnail_url": "https://...jpg",
+                 "og_image": "https://...jpg", "gorsel_genislik": 1200,
+                 "gorsel_yukseklik": 600, "fotografci": "Andrew Wendler",
+                 "gorsel_kaynak": "og:image", "metin": "..." }],
+  "gorseller": [
+    {"baslik":"BMW M4 F82.jpg","gorsel":"https://upload.wikimedia.org/.../BMW_M4_F82.jpg",
+     "kucuk":"https://thumb.wikimedia.org/.../1280px-BMW_M4_F82.jpg",
+     "genislik":2151,"yukseklik":1092,"kaynak":"wikimedia",
+     "lisans":"CC BY-SA 2.0","fotografci":"Alexandre Prévot from Nancy, France",
+     "site":"https://commons.wikimedia.org/wiki/File:BMW_M4_F82.jpg"},
+    {"baslik":"2025 BMW M4 CS Exterior Photos","gorsel":"https://tse4.mm.bing.net/...&w=1600&h=900&qlt=100",
+     "genislik":1920,"yukseklik":1080,"kaynak":"duckduckgo",
+     "site":"https://carbuzz.com/cars/bmw/m4-cs/2025/photos-exterior/",
+     "site_domain":"carbuzz.com"}
+  ],
+  "gorsel_adet": 12, "gorsel_motor": "wikimedia+duckduckgo",
+  "sure_sn": 2.86
+}
+```
+
+### Neden bazı sonuçlarda `image_url` boş?
+
+Fotoğraf siteleri (Unsplash 401, Pexels/Edmunds 403) veri merkezi IP'lerinden gelen
+istekleri engelliyor; og:image okunamıyor. Bu durumda:
+
+1. Galeri görsellerinden **aynı alan adına** ait olan varsa `image_url` ondan doldurulur
+   (`gorsel_kaynak: "galeri:duckduckgo"`).
+2. Hiçbiri yoksa alan boş bırakılır — **alakasız bir fotoğraf iliştirilmez.**
+   Galeri (`gorseller`) ise her durumda dolu gelir.
+
+### Performans
+
+| İstek | Süre |
+|---|---|
+| `gorsel=0` (sadece metin) | 0.9-1.5 sn |
+| varsayılan (metin + 12 görsel) | 1.5-3.5 sn |
+| `detay=1` (+3 sayfa metni, jina) | +3-6 sn |
+| önbellek | 0.2 sn |

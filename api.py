@@ -302,7 +302,7 @@ def _admin_kontrol():
 
 @app.get("/api/v1/health")
 def health():
-    return jsonify(ok=True, servis="sarki-api", surum="5.0",
+    return jsonify(ok=True, servis="sarki-api", surum="5.1",
                    ffmpeg=api_core.ffmpeg_var(),
                    zaman=time.strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -623,12 +623,24 @@ def sozler_ep():
 @app.get("/api/v1/web")
 @korumali
 def web_ep():
-    """Genel web arama (Google-CSE tarzı) — ⚡ paralel motor yarışı, ~0.2-2 sn.
+    """Genel web arama + GÖRSELLER (varsayılan olarak açık).
 
-    Yeni parametreler:
-      gorsel=1     → sonuçlarla birlikte GÖRSELLER de gelir (AI'ya tek çağrıda metin+görsel)
-      gorsel_limit → kaç görsel (varsayılan 8, en fazla 24)
-      detay=1      → ilk 3 sonucun sayfa metni (RAG paketi)
+    Görsel verisi üç katmanda gelir:
+      1. Her metin sonucuna kendi sayfasından `image_url` / `og_image` / `thumbnail_url`,
+         `gorsel_genislik`, `gorsel_yukseklik`, `fotografci` (og:image + meta author).
+      2. `gorseller` dizisi: gerçek fotoğraf galerisi (Wikimedia + DuckDuckGo),
+         her öğede `gorsel` (tam boy), `kucuk` (thumbnail), `site`, `lisans`, `fotografci`.
+      3. og:image bulunamazsa aynı domaindeki galeri görseli eşleştirilir.
+
+    Parametreler:
+      q            : sorgu (zorunlu)
+      limit        : metin sonucu sayısı (varsayılan 10, en fazla 20)
+      gorsel       : 1 (varsayılan) galeri açık · 0 → galeriyi kapat
+      gorsel_limit : galeri görsel sayısı (varsayılan 12, en fazla 24)
+      gorsel_zengin: kaç metin sonucuna og:image eklensin (varsayılan 3, 0 → kapalı)
+      gorsel_bekle : galeri için en fazla bekleme, sn (varsayılan 3.0)
+      detay        : 1 → ilk 3 sonucun sayfa metni (RAG paketi)
+      galeri       : 0 → hiç görsel işi yapma (en hızlı mod)
     """
     q = (request.args.get("q") or "").strip()
     try:
@@ -639,17 +651,33 @@ def web_ep():
         return _hata("q parametresi gerekli", 400)
     if "web" not in g.izin:
         return _hata("Bu key 'web' sağlayıcısına izinli değil", 403)
-    detay = str(request.args.get("detay") or "").lower() in ("1", "true", "evet")
-    gorsel = str(request.args.get("gorsel") or request.args.get("görsel") or "").lower() in (
-        "1", "true", "evet", "on")
+
+    def _bayrak(ad, varsayilan):
+        v = request.args.get(ad)
+        if v is None:
+            return varsayilan
+        return str(v).strip().lower() not in ("0", "false", "hayir", "hayır", "kapali", "kapalı", "off")
+
+    galeri_kapali = str(request.args.get("galeri") or "").strip().lower() in ("0", "false", "off")
+    gorsel = _bayrak("gorsel", True) and not galeri_kapali      # ⚠️ artık VARSAYILAN AÇIK
+    detay = _bayrak("detay", False)
     try:
-        gorsel_limit = int(request.args.get("gorsel_limit") or 8)
+        gorsel_limit = int(request.args.get("gorsel_limit") or 12)
     except ValueError:
-        gorsel_limit = 8
+        gorsel_limit = 12
+    try:
+        gorsel_zengin = int(request.args.get("gorsel_zengin") or (0 if galeri_kapali else 3))
+    except ValueError:
+        gorsel_zengin = 3
+    try:
+        gorsel_bekle = float(request.args.get("gorsel_bekle") or 3.0)
+    except ValueError:
+        gorsel_bekle = 3.0
+
     t0 = time.time()
     limit = max(1, min(limit, 20))
 
-    # görsel araması metin aramasıyla AYNI ANDA başlar (toplam süre = ikisinin uzunu)
+    # ---- galeri araması metin aramasıyla AYNI ANDA başlar ----
     gorsel_kutu = {}
     gorsel_hazir = threading.Event()
 
@@ -667,20 +695,40 @@ def web_ep():
 
     sonuc, motor = api_core.web_ara(q, limit)
 
+    # ---- metin sonuçlarına og:image / fotoğrafçı eklemesi (paralel, süreli) ----
+    gorsel_zengin_kutu = {}
+    zengin_bitti = threading.Event()
+
+    def _zengin_calistir():
+        try:
+            import web_motor as _wm
+            gorsel_zengin_kutu["v"] = _wm.sonuclara_gorsel_ekle(
+                sonuc, adet=max(0, min(gorsel_zengin, 10)), butce=1.8)
+        except Exception as ex:
+            print("[gorsel-zengin]", str(ex)[:100], flush=True)
+        finally:
+            zengin_bitti.set()
+
+    if sonuc and gorsel_zengin:
+        threading.Thread(target=_zengin_calistir, daemon=True).start()
+        zengin_bitti.wait(2.0)
+
+    # ---- galeri sonucunu topla ----
     gorseller, gorsel_motor = [], None
     gorsel_tamam = True
     if gorsel:
-        # görseller için en fazla GORSEL_BEKLE sn bekle — metin araması zaten bitti,
-        # görsel gelmezse isteği bekletmeyiz (istemci /api/v1/gorsel-ara ile ayrıca çeker)
-        try:
-            gorsel_bekle = float(request.args.get("gorsel_bekle") or 2.5)
-        except ValueError:
-            gorsel_bekle = 2.5
         gorsel_tamam = gorsel_hazir.wait(max(0.2, min(gorsel_bekle, 6.0)))
         gorseller, gorsel_motor, _gs = gorsel_kutu.get("veri", ([], "yok", 0))
+        # og:image bulunamayan sonuçlar için domain eşleşmesi (ağ isteği yok, çok hızlı)
+        if gorseller and gorsel_zengin:
+            try:
+                import web_motor as _wm
+                _wm.sonuclara_gorsel_ekle(sonuc, adet=0, butce=0.05, galeri=gorseller)
+            except Exception:
+                pass
 
     if detay and sonuc:
-        # RAG modu: ilk 3 sonucu paralel oku (jina) -> metin alanını doldur
+        # RAG modu: ilk 3 sonucu paralel oku (jina) → metin alanını doldur
         kutular = {}
 
         def _cek(i, s):
@@ -700,8 +748,12 @@ def web_ep():
             sonuc[i]["metin_karakter"] = v["karakter"]
             sonuc[i]["metin_kirpildi"] = v["kirpildi"]
 
+    # özet: kaç sonuçta görsel var
+    gorselli = sum(1 for s in sonuc if s.get("image_url"))
+
     govde = dict(ok=True, q=q, adet=len(sonuc), motor=motor or "yok", detay=detay,
                  sure_sn=round(time.time() - t0, 2), sonuclar=sonuc,
+                 gorselli_sonuc=gorselli,
                  not_="DuckDuckGo operatörleri desteklenir: site:, filetype:, intitle:, -hariç"
                       + (" — detay=1: ilk 3 sonucun sayfa metni dahil (RAG paketi)"
                          if detay else ""))
@@ -711,8 +763,7 @@ def web_ep():
         govde["gorsel_motor"] = gorsel_motor
         if not gorsel_tamam:
             govde["gorsel_ipucu"] = (f"/api/v1/gorsel-ara?q={q}&limit={gorsel_limit}"
-                                     " — görseller henüz hazır değil, bu uçtan ayrıca çek "
-                                     "(ya da gorsel_bekle=5 ile daha uzun bekle)")
+                                     " — galeri henüz hazır değil (gorsel_bekle=5 ile daha uzun bekle)")
     if not sonuc:
         govde["uyari"] = ("Sonuç bulunamadı: sunucu IP'si arama motorları tarafından "
                           "kısıtlanmış olabilir. Render → Environment'a BRAVE_KEY, "
@@ -741,7 +792,8 @@ def gorsel_ara_ep():
     gorseller, motor, _gs = api_core.gorsel_ara(q, max(1, min(limit, 24)))
     return jsonify(ok=True, q=q, adet=len(gorseller), motor=motor,
                    sure_sn=round(time.time() - t0, 2), gorseller=gorseller,
-                   not_="'gorsel' tam boy (paylaşılabilir), 'kucuk' grid/liste için uygundur")
+                   not_=("'gorsel' tam boy (paylaşılabilir), 'kucuk' grid/liste için uygundur; "
+                         "'fotografci' ve 'lisans' alanları künye için hazırdır"))
 
 
 @app.get("/api/v1/web/durum")

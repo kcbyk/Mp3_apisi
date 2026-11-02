@@ -68,6 +68,10 @@ BASLIKLAR = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
+# Wikimedia API politikası tanımlayıcı User-Agent ister; bu 429'ları ciddi ölçüde azaltır.
+WIKI_UA = ("sarki-api/5.0 (https://github.com/kcbyk/Mp3_apisi; web+gorsel arama) "
+           "requests/" + getattr(requests, "__version__", "2"))
+
 _S = requests.Session()
 _S.headers.update(BASLIKLAR)
 _adapter = HTTPAdapter(pool_connections=24, pool_maxsize=48, max_retries=0)
@@ -317,7 +321,7 @@ def _wikipedia(q, limit, timeout, deneme=0):
             r = _S.get(f"https://{dil}.wikipedia.org/w/api.php",
                        params={"action": "query", "list": "search", "srsearch": q,
                                "format": "json", "srlimit": min(limit, 10)},
-                       timeout=(3.5, timeout))
+                       headers={"User-Agent": WIKI_UA}, timeout=(3.5, timeout))
             hits = (r.json().get("query") or {}).get("search") or []
             if hits:
                 return [{"baslik": s.get("title", "") + f" — Vikipedi ({dil.upper()})",
@@ -459,7 +463,7 @@ def _puan(q, sonuc):
 ALAKA_ESIK = 0.34    # bu puanın altı "alakasız" sayılır (sadeleştirme turu tetiklenir)
 
 
-def _yaris(q, limit, motorlar, butce, ek_pencere=EK_PENCERE, bitis=None):
+def _yaris(q, limit, motorlar, butce, ek_pencere=EK_PENCERE, bitis=None, birlestir=False):
     """Motorları paralel yarıştırır.
 
     Kurallar:
@@ -474,6 +478,8 @@ def _yaris(q, limit, motorlar, butce, ek_pencere=EK_PENCERE, bitis=None):
     son_tarih = min(t0 + butce, bitis) if bitis else t0 + butce
     oncelik = {ad: i for i, (ad, _) in enumerate(motorlar)}
     tercihli = {ad for ad, _ in motorlar[:2]}
+    ilk_saglikli = None
+    ek_pencere_topla = min(1.6, butce / 2)      # birlestir modunda toplama penceresi
     ek_sure = min(0.7, butce)
     esik = min(limit, 3)
     havuz = ThreadPoolExecutor(max_workers=len(motorlar) + 1, thread_name_prefix="web")
@@ -500,7 +506,19 @@ def _yaris(q, limit, motorlar, butce, ek_pencere=EK_PENCERE, bitis=None):
             # kazanç kontrolü
             if adaylar:
                 en = max(adaylar, key=lambda a: (a[0], -a[1]))
-                if en[0] >= 0.99 or (en[0] >= ALAKA_ESIK and en[2] >= esik):
+                if birlestir:
+                    # galeri modu: ilk sağlıklı sonuçtan sonra kısa bir "toplama" penceresi
+                    if en[0] >= ALAKA_ESIK:
+                        if ilk_saglikli is None:
+                            ilk_saglikli = time.time()
+                        saglam_a = [a for a in adaylar if a[0] >= ALAKA_ESIK]
+                        toplam = sum(len(a[3]) for a in saglam_a)
+                        # 2+ farklı kaynaktan yeterli görsel geldiyse erken çık,
+                        # yoksa toplama penceresini sonuna kadar bekle (zengin galeri)
+                        if (len(saglam_a) >= 2 and toplam >= limit) or \
+                                (time.time() - ilk_saglikli) >= ek_pencere_topla:
+                            break
+                elif en[0] >= 0.99 or (en[0] >= ALAKA_ESIK and en[2] >= esik):
                     if en[4] in tercihli or (time.time() - t0) >= ek_sure:
                         break
 
@@ -512,6 +530,34 @@ def _yaris(q, limit, motorlar, butce, ek_pencere=EK_PENCERE, bitis=None):
         if puan <= 0.0:
             # tamamen alakasız çöp (Bing/DDG veri merkezi IP'lerine bazen böyle servis ediyor)
             return [], "alakasız", round(time.time() - t0, 2), 0.0
+
+        if birlestir:
+            # GALERİ MODU: sağlıklı TÜM kaynakları harmanla
+            # (Wikimedia=lisanslı/künyeli, DuckDuckGo=web geneli yüksek çözünürlük)
+            saglam = sorted([a for a in adaylar if a[0] >= ALAKA_ESIK], key=lambda a: a[1])
+            if len(saglam) > 1:
+                kuyruklar = [list(a[3]) for a in saglam]
+                birlesik, gorulen = [], set()
+                while len(birlesik) < limit and any(kuyruklar):
+                    ilerleme = False
+                    for kuyruk in kuyruklar:
+                        while kuyruk:
+                            oge = kuyruk.pop(0)
+                            anahtar = (oge.get("gorsel") or oge.get("url") or "").split("?")[0]
+                            if anahtar and anahtar in gorulen:
+                                continue
+                            if anahtar:
+                                gorulen.add(anahtar)
+                            birlesik.append(oge)
+                            ilerleme = True
+                            break
+                        if len(birlesik) >= limit:
+                            break
+                    if not ilerleme:
+                        break
+                if birlesik:
+                    sonuc = birlesik
+                    ad = "+".join(a[4] for a in saglam)
 
         # kısa ek pencere: liste eksikse başka motorun sonuçlarıyla zenginleştir
         if ek_pencere > 0 and bekleyen and len(sonuc) < limit and puan >= ALAKA_ESIK:
@@ -525,11 +571,12 @@ def _yaris(q, limit, motorlar, butce, ek_pencere=EK_PENCERE, bitis=None):
                         continue
                     if not ek or _puan(q, ek) < ALAKA_ESIK:
                         continue
-                    gorulen = {x.get("url") for x in sonuc}
+                    gorulen = {(x.get("url") or x.get("gorsel") or "").split("?")[0] for x in sonuc}
                     for x in ek:
-                        if x.get("url") not in gorulen:
+                        anahtar = (x.get("url") or x.get("gorsel") or "").split("?")[0]
+                        if anahtar not in gorulen:
                             sonuc.append(x)
-                            gorulen.add(x.get("url"))
+                            gorulen.add(anahtar)
                         if len(sonuc) >= limit:
                             break
                     if len(sonuc) >= limit:
@@ -627,7 +674,7 @@ def _commons(q, limit, timeout, deneme=0):
         "action": "query", "generator": "search", "gsrsearch": q,
         "gsrnamespace": 6, "gsrlimit": max(limit, 8), "prop": "imageinfo",
         "iiprop": "url|size|extmetadata", "iiurlwidth": 1200, "format": "json",
-    }, timeout=(3.5, timeout))
+    }, headers={"User-Agent": WIKI_UA}, timeout=(3.5, timeout))
     sayfalar = (r.json().get("query") or {}).get("pages") or {}
     sonuc = []
     for p in sorted(sayfalar.values(), key=lambda x: x.get("index", 99)):
@@ -637,9 +684,11 @@ def _commons(q, limit, timeout, deneme=0):
         ad = p.get("title", "").replace("File:", "")
         if re.search(r"\.(svg|gif|tif|tiff|pdf|webm|ogv)$", ii["url"], re.I):
             continue
-        ozet = ""
+        ozet, fotografci = "", ""
         try:
-            ozet = _temiz(((ii.get("extmetadata") or {}).get("ImageDescription") or {}).get("value", ""), 200)
+            md = ii.get("extmetadata") or {}
+            ozet = _temiz((md.get("ImageDescription") or {}).get("value", ""), 200)
+            fotografci = _temiz((md.get("Artist") or {}).get("value", ""), 100)
         except Exception:
             pass
         sonuc.append({
@@ -651,6 +700,7 @@ def _commons(q, limit, timeout, deneme=0):
             "site": ii.get("descriptionurl"),
             "kaynak": "wikimedia",
             "lisans": _temiz(((ii.get("extmetadata") or {}).get("LicenseShortName") or {}).get("value", ""), 40),
+            "fotografci": fotografci,
             "ozet": ozet,
         })
         if len(sonuc) >= limit:
@@ -659,31 +709,52 @@ def _commons(q, limit, timeout, deneme=0):
 
 
 def _ddg_gorsel_jina(q, limit, timeout, deneme=0):
-    """DDG görselleri → jina reader (challenge'ı aşar).
-    Markdown şablonu:
-        ![Image 1: ALT](THUMB)612 × 408  ### [SAYFA BAŞLIĞI](SAYFA_URL) ... ![Image 2](favicon)
-    Blok blok ayrıştırılır: başlık ve sayfa URL'i `### [..](..)` başlığından alınır
-    (favicon/thumbnail linkleri sayfa URL'i sanılmaz)."""
+    """DDG görselleri → jina reader (veri merkezi IP engelini aşar).
+
+    Markdown akışı (tek satırda birleşik gelebiliyor, bu yüzden blok bölmek yerine
+    tek geçişte taranır):
+
+        ![Image 1: ALT](THUMB)1920 × 1080  ### [BAŞLIK ![Image 2](.../ip3/alan.com.ico) alan.com](SAYFA_URL)
+
+    Çıkarılanlar: tam boy görsel (thumbnail URL'i 1600px'e yükseltilir),
+    küçük görsel (thumbnail), genişlik/yükseklik, sayfa başlığı, sayfa URL'i,
+    kaynak alan adı (favicon adresinden) ve alt metni.
+    """
     hedef = ("https://duckduckgo.com/?q=" + urllib.parse.quote(q) +
              "&iax=images&ia=images&kp=1")
     r = _S.get(JINA + hedef, timeout=(3.5, timeout))
     metin = r.text
-    # her görsel bloğu: "![Image N" ile başlar, bir sonraki "![Image" ile biter
-    parcalar = re.split(r'(?=!\[Image \d+)', metin)
+
+    GORSEL = re.compile(r'!\[Image \d+:?\s*([^\]]*)\]\((https://[^)\s]+)\)\s*(\d+)\s*[×x]\s*(\d+)')
+    SAYFA = re.compile(r'\]\((https?://(?!external-content\.duckduckgo\.com)[^)\s]+)\)')
+    ALAN = re.compile(r'/ip3/([^/)\s&]+?)\.(?:ico|png|jpe?g)')
+
     sonuc, gorulen = [], set()
-    for parca in parcalar[1:]:
-        m = re.match(r'!\[Image \d+:?\s*([^\]]*)\]\((https://[^)\s]+)\)\s*(\d+)\s*[×x]\s*(\d+)', parca)
-        if not m:
-            continue
+    for m in GORSEL.finditer(metin):
         alt, thumb, gw, gh = m.group(1).strip(), m.group(2), m.group(3), m.group(4)
         if "external-content.duckduckgo.com/ip3" in thumb:
-            continue                                   # favicon
-        # sayfa başlığı + sayfa linki: "### [başlık](url)"
-        bas = re.search(r'#{1,6}\s*\[([^\]]{3,200})\]\((https?://[^)\s]+)\)', parca)
-        sayfa_baslik = _temiz(bas.group(1), 140) if bas else _temiz(alt, 140)
-        sayfa = bas.group(2) if bas else ""
-        if "duckduckgo.com" in sayfa:
-            sayfa = ""
+            continue                                     # favicon
+        # başlık satırı: bu görselden sonraki ~600 karakter
+        pencere = metin[m.end():m.end() + 600]
+        satir = pencere.split("\n", 1)[0]
+        sayfa = ""
+        for u in SAYFA.findall(satir):
+            if "duckduckgo.com" in u:
+                continue
+            sayfa = u
+        alan = ""
+        ma = ALAN.search(satir)
+        if ma:
+            alan = ma.group(1).lower()
+        if not sayfa and alan:
+            sayfa = "https://" + alan
+        # başlık: "### [" sonrası, "![" veya "](...)" öncesi
+        bas_metin = ""
+        mb = re.search(r'#+\s*\[([^\]]{2,200})', satir)
+        if mb:
+            bas_metin = re.split(r'!\[', mb.group(1))[0]
+        if not bas_metin.strip():
+            bas_metin = re.split(r'!\[Image', alt)[0]
         # thumbnail içindeki asıl adres (?u=...) → daha büyük sürüm
         ham = thumb
         mu = re.search(r'[?&]u=([^&]+)', thumb)
@@ -695,14 +766,16 @@ def _ddg_gorsel_jina(q, limit, timeout, deneme=0):
         gorulen.add(anahtar)
         w, h = _olcekli_boyut(gw, gh, 1600)
         sonuc.append({
-            "baslik": sayfa_baslik,
+            "baslik": _temiz(bas_metin, 140),
             "gorsel": _buyut(ham, w, h),
             "kucuk": thumb,
             "genislik": int(gw) if gw.isdigit() else None,
             "yukseklik": int(gh) if gh.isdigit() else None,
             "site": sayfa,
+            "site_domain": alan or (urllib.parse.urlparse(sayfa).netloc.replace("www.", "") if sayfa else ""),
             "kaynak": "duckduckgo",
             "lisans": "",
+            "fotografci": "",
             "ozet": _temiz(alt, 200),
         })
         if len(sonuc) >= limit:
@@ -718,7 +791,7 @@ def _wikipedia_gorsel(q, limit, timeout, deneme=0):
             r = _S.get(f"https://{dil}.wikipedia.org/w/api.php", params={
                 "action": "query", "generator": "search", "gsrsearch": q, "gsrlimit": limit,
                 "prop": "pageimages", "pithumbsize": 1400, "format": "json"},
-                timeout=(3.5, timeout))
+                headers={"User-Agent": WIKI_UA}, timeout=(3.5, timeout))
             sayfalar = (r.json().get("query") or {}).get("pages") or {}
             for p in sorted(sayfalar.values(), key=lambda x: x.get("index", 99)):
                 th = p.get("thumbnail") or {}
@@ -781,7 +854,9 @@ def gorsel_ara(q, limit=8):
     t0 = time.time()
     bitis = t0 + GORSEL_BUTCE
     q_gorsel = _gorsel_sorgu(q)
-    gorseller, motor, gecen, puan = _yaris(q_gorsel, limit, GORSEL_MOTORLARI, GORSEL_BUTCE, bitis=bitis)
+    gorseller, motor, gecen, puan = _yaris(q_gorsel, limit, GORSEL_MOTORLARI,
+                                           min(GORSEL_BUTCE, 2.6),
+                                           bitis=bitis, birlestir=True)
     if puan < ALAKA_ESIK:
         for aday in list(_sadelestir(q_gorsel))[:2]:
             kalan = min(bitis - time.time(), 2.5)
@@ -861,3 +936,164 @@ def _oku_paralel(sonuclar):
     for t in isler:
         t.join(timeout=20)
     return kutular
+
+
+# ============================================================================
+#     SAYFA GÖRSELİ ÇIKARICI (og:image / twitter:image / image_src + fotoğrafçı)
+# ============================================================================
+_META_ADLARI = {
+    "og:image", "og:image:url", "og:image:secure_url", "og:image:width", "og:image:height",
+    "og:image:alt", "twitter:image", "twitter:image:src", "twitter:image:alt",
+    "image", "thumbnail", "thumbnailurl", "author", "article:author", "og:site_name",
+    "og:title", "twitter:creator", "dc.creator", "parsely-author", "sailthru.author",
+}
+
+
+def _meta_ayikla(html_metin):
+    """<meta property="og:image" content="..."> etiketlerini (her iki sırada) toplar."""
+    bulunan = {}
+    for etiket in re.finditer(r"<meta\b[^>]*>", html_metin, re.I):
+        t = etiket.group(0)
+        ad = re.search(r'(?:property|name|itemprop)\s*=\s*["\']([^"\']+)["\']', t, re.I)
+        ic = re.search(r'content\s*=\s*["\']([^"\']*)["\']', t, re.I)
+        if not (ad and ic):
+            continue
+        anahtar = ad.group(1).strip().lower()
+        if anahtar in _META_ADLARI and anahtar not in bulunan:
+            bulunan[anahtar] = html.unescape(ic.group(1).strip())
+    # <link rel="image_src" href="...">
+    m = re.search(r'<link[^>]+rel\s*=\s*["\'](?:image_src|apple-touch-icon)["\'][^>]*href\s*=\s*["\']([^"\']+)["\']',
+                  html_metin, re.I)
+    if m:
+        bulunan.setdefault("image_src", html.unescape(m.group(1).strip()))
+    return bulunan
+
+
+def _html_gorsel(url, timeout=4.0, maks_bayt=400_000):
+    """Sayfa HTML'inden ana görseli + fotoğrafçı bilgisini çıkarır.
+    Dönen: {image_url, og_image, thumbnail_url, gorsel_genislik, gorsel_yukseklik, fotografci}
+    Hiçbir şey bulunamazsa {} döner (hata fırlatmaz)."""
+    if not url or not str(url).startswith(("http://", "https://")):
+        return {}
+    try:
+        r = _S.get(url, timeout=(2.5, timeout), stream=True, allow_redirects=True,
+                   headers={"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"})
+    except Exception:
+        return {}
+    try:
+        ct = (r.headers.get("content-type") or "").lower()
+        if "html" not in ct and "xml" not in ct:
+            return {}
+        # iter_content gzip/brotli'yi çözer (raw.read çözmez!) — ilk maks_bayt kadar oku
+        parcalar, toplam = [], 0
+        for parca in r.iter_content(chunk_size=65536):
+            if not parca:
+                continue
+            parcalar.append(parca)
+            toplam += len(parca)
+            if toplam >= maks_bayt:
+                break
+        ham = b"".join(parcalar)[:maks_bayt]
+    except Exception:
+        return {}
+    finally:
+        try:
+            r.close()
+        except Exception:
+            pass
+    if not ham:
+        return {}
+    metin = ham.decode(r.encoding or "utf-8", "ignore")
+    m = _meta_ayikla(metin)
+    aday = (m.get("og:image:secure_url") or m.get("og:image") or m.get("og:image:url")
+            or m.get("twitter:image") or m.get("twitter:image:src")
+            or m.get("image") or m.get("image_src") or m.get("thumbnailurl") or "")
+    if not aday:
+        return {}
+    tam = urllib.parse.urljoin(url, aday)
+    if not tam.startswith("http"):
+        return {}
+    cikti = {
+        "image_url": tam,
+        "og_image": tam,
+        "thumbnail_url": tam,
+        "gorsel_kaynak": "og:image",
+    }
+    for alan, anahtar in (("gorsel_genislik", "og:image:width"),
+                          ("gorsel_yukseklik", "og:image:height")):
+        v = m.get(anahtar)
+        if v and str(v).split(".")[0].isdigit():
+            cikti[alan] = int(str(v).split(".")[0])
+    fotografci = (m.get("author") or m.get("article:author") or m.get("twitter:creator")
+                  or m.get("dc.creator") or m.get("parsely-author") or m.get("sailthru.author") or "")
+    if fotografci and len(fotografci) < 120:
+        cikti["fotografci"] = _temiz(fotografci, 100)
+    alt = m.get("og:image:alt") or m.get("twitter:image:alt")
+    if alt:
+        cikti["gorsel_alt"] = _temiz(alt, 200)
+    return cikti
+
+
+def sonuclara_gorsel_ekle(sonuclar, adet=3, butce=2.0, galeri=None):
+    """Metin sonuçlarının her birine kendi sayfasından görsel bilgisi ekler.
+    Paralel çalışır ve 'butce' saniyeyi AŞMAZ (yavaş siteler isteği bekletmez).
+    galeri: görsel arama sonuçları — og:image bulunamazsa aynı domainden eşleştirilir.
+    """
+    if not sonuclar:
+        return sonuclar
+    hedef = min(adet, len(sonuclar))
+    sonuc_kutusu = {}
+
+    def _cek(i, u):
+        try:
+            sonuc_kutusu[i] = _html_gorsel(u, timeout=butce)
+        except Exception:
+            sonuc_kutusu[i] = {}
+
+    isler = [threading.Thread(target=_cek, args=(i, sonuclar[i].get("url", "")), daemon=True)
+             for i in range(hedef)]
+    for t in isler:
+        t.start()
+    bitis = time.time() + butce
+    for t in isler:
+        t.join(timeout=max(0.05, bitis - time.time()))
+
+    # domain → galeri görseli (og:image bulunamayanlar için yedek)
+    domain_haritasi = {}
+    for g in (galeri or []):
+        for kaynak in (g.get("site"), g.get("site_domain"), g.get("gorsel")):
+            if not kaynak:
+                continue
+            try:
+                d = urllib.parse.urlparse(kaynak).netloc.replace("www.", "")
+            except Exception:
+                continue
+            if d and d not in domain_haritasi:
+                domain_haritasi[d] = g
+
+    for i, s in enumerate(sonuclar):
+        bilgi = sonuc_kutusu.get(i) or {}
+        if bilgi:
+            s.update(bilgi)
+            if bilgi.get("image_url") and not s.get("thumbnail_url"):
+                s["thumbnail_url"] = bilgi["image_url"]
+            continue
+        # og:image yok → galeriden aynı domain eşleşmesi
+        try:
+            d = urllib.parse.urlparse(s.get("url", "")).netloc.replace("www.", "")
+        except Exception:
+            d = ""
+        g = domain_haritasi.get(d)
+        if g:
+            s["image_url"] = g.get("gorsel")
+            s["thumbnail_url"] = g.get("kucuk") or g.get("gorsel")
+            s["og_image"] = g.get("gorsel")
+            s["gorsel_kaynak"] = "galeri:" + str(g.get("kaynak") or "")
+            if g.get("genislik"):
+                s["gorsel_genislik"] = g["genislik"]
+            if g.get("yukseklik"):
+                s["gorsel_yukseklik"] = g["yukseklik"]
+            if g.get("fotografci"):
+                s["fotografci"] = g["fotografci"]
+    return sonuclar
+
