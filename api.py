@@ -758,6 +758,16 @@ def web_ep():
             except Exception:
                 pass
 
+    # --- şema garantisi: her sonuçta görsel alanları BULUNUR (bilinmiyorsa null) ---
+    for s in sonuc:
+        s.setdefault("image_url", None)
+        s.setdefault("thumbnail_url", None)
+        s.setdefault("og_image", None)
+        s.setdefault("gorsel_genislik", None)
+        s.setdefault("gorsel_yukseklik", None)
+        s.setdefault("fotografci", None)
+        s.setdefault("gorsel_kaynak", None)
+
     # özet: kaç sonuçta görsel var
     gorselli = sum(1 for s in sonuc if s.get("image_url"))
 

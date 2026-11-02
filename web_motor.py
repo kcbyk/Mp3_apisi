@@ -647,6 +647,20 @@ def web_ara(q, limit=10, derin=False):
 # ============================================================================
 #                          GÖRSEL ARAMA MOTORLARI
 # ============================================================================
+def _utm_temizle(url):
+    """Wikimedia imageinfo URL'lerine eklenen utm_* parametrelerini atar."""
+    if not url or "utm_" not in url:
+        return url
+    try:
+        parca = urllib.parse.urlsplit(url)
+        sorgu = [(k, v) for k, v in urllib.parse.parse_qsl(parca.query)
+                 if not k.startswith("utm_")]
+        return urllib.parse.urlunsplit((parca.scheme, parca.netloc, parca.path,
+                                        urllib.parse.urlencode(sorgu), parca.fragment))
+    except Exception:
+        return url
+
+
 def _buyut(url, w=None, h=None):
     """Bing thumbnail URL'ini daha büyük/ kaliteli sürüme çevirir (qlt=100)."""
     if not url or "bing.net" not in url:
@@ -695,8 +709,8 @@ def _commons(q, limit, timeout, deneme=0):
             pass
         sonuc.append({
             "baslik": ad[:150],
-            "gorsel": ii.get("url"),
-            "kucuk": ii.get("thumburl") or ii.get("url"),
+            "gorsel": _utm_temizle(ii.get("url")),
+            "kucuk": _utm_temizle(ii.get("thumburl") or ii.get("url")),
             "genislik": ii.get("width"),
             "yukseklik": ii.get("height"),
             "site": ii.get("descriptionurl"),
