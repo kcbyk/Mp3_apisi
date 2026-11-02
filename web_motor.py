@@ -56,7 +56,8 @@ BUTCE = float(os.environ.get("WEB_BUTCE", "4"))          # ilk tur için üst s�
 TOPLAM_BUTCE = float(os.environ.get("WEB_TOPLAM_BUTCE", "6.5"))  # sadeleştirme dahil tavan
 GORSEL_BUTCE = float(os.environ.get("WEB_GORSEL_BUTCE", "4.5"))
 EK_PENCERE = float(os.environ.get("WEB_EK_PENCERE", "1.2"))  # ikinci motoru bekleme payı
-CACHE_TTL = int(os.environ.get("WEB_CACHE_TTL", "600"))      # 10 dk
+CACHE_TTL = int(os.environ.get("WEB_CACHE_TTL", "600"))       # metin: 10 dk
+GORSEL_CACHE_TTL = int(os.environ.get("WEB_GORSEL_CACHE_TTL", "21600"))  # görsel: 6 saat
 CACHE_MAX = int(os.environ.get("WEB_CACHE_MAX", "300"))
 JINA = os.environ.get("WEB_JINA", "https://r.jina.ai/")
 
@@ -122,9 +123,10 @@ def saglikli(q, sonuc, en_az=1):
 
 
 def _onbellek_al(anahtar):
+    ttl = GORSEL_CACHE_TTL if (anahtar and anahtar[0] == "g") else CACHE_TTL
     with _kilit:
         kayit = _CACHE.get(anahtar)
-        if kayit and time.time() - kayit[0] < CACHE_TTL:
+        if kayit and time.time() - kayit[0] < ttl:
             return kayit[1]
     return None
 
@@ -1015,6 +1017,14 @@ def gorsel_ara(q, limit=8):
     gorseller, motor, gecen, puan = _yaris(q_gorsel, limit, motorlar,
                                            min(GORSEL_BUTCE, 2.6),
                                            bitis=bitis, birlestir=True)
+    if not gorseller:
+        # 429 / geçici engel dalgalanması: çok kısa bekleyip bir kez daha dene
+        kalan = bitis - time.time()
+        if kalan > 1.2:
+            time.sleep(0.5)
+            gorseller, motor, _g, puan = _yaris(q_gorsel, limit, motorlar,
+                                                min(kalan - 0.5, 2.2),
+                                                bitis=bitis, birlestir=True)
     if puan < ALAKA_ESIK:
         for aday in list(_sadelestir(q_gorsel))[:2]:
             kalan = min(bitis - time.time(), 2.5)
