@@ -829,9 +829,64 @@ def _gorsel_sorgu(q):
     return " ".join(kalan) if len(kalan) >= 1 else (q or "")
 
 
+
+
+def _ddg_gorsel_dogrudan(q, limit, timeout, deneme=0):
+    """DuckDuckGo görsel API'si (vqd akışı) — jina'ya gerek yok, en zengin meta veri.
+    Her sonuçta: image (tam boy), thumbnail, title, width, height, url (kaynak sayfa).
+    Veri merkezi IP'lerinde bazen 'anomaly' (HTTP 202) döner → o zaman boş liste."""
+    try:
+        h = _S.get("https://duckduckgo.com/", params={"q": q, "iax": "images", "ia": "images"},
+                   timeout=(3.0, timeout)).text
+        m = (re.search(r'vqd="([\d-]+)"', h) or re.search(r'vqd=([\d-]+)&', h)
+             or re.search(r'vqd["\']?\s*[:=]\s*["\']([\d-]+)', h))
+        if not m:
+            return []
+        vqd = m.group(1)
+        r = _S.get("https://duckduckgo.com/i.js",
+                   params={"l": "tr-tr", "o": "json", "q": q, "vqd": vqd,
+                           "f": ",,,", "p": "1"},
+                   headers={"Referer": "https://duckduckgo.com/",
+                            "Accept": "application/json, text/javascript, */*; q=0.01",
+                            "X-Requested-With": "XMLHttpRequest"},
+                   timeout=(3.0, timeout))
+        if r.status_code != 200 or "json" not in (r.headers.get("content-type") or ""):
+            return []
+        veri = r.json().get("results") or []
+    except Exception:
+        return []
+    sonuc = []
+    for x in veri:
+        img = x.get("image") or x.get("thumbnail")
+        if not img:
+            continue
+        gw, gh = x.get("width"), x.get("height")
+        try:
+            w, h = _olcekli_boyut(gw, gh, 1600)
+        except Exception:
+            w, h = 1600, 1600
+        sonuc.append({
+            "baslik": _temiz(x.get("title", ""), 140),
+            "gorsel": _buyut(img, w, h),
+            "kucuk": x.get("thumbnail") or img,
+            "genislik": int(gw) if str(gw).isdigit() else None,
+            "yukseklik": int(gh) if str(gh).isdigit() else None,
+            "site": x.get("url") or "",
+            "site_domain": (urllib.parse.urlparse(x.get("url") or "").netloc.replace("www.", "")),
+            "kaynak": "duckduckgo",
+            "lisans": "",
+            "fotografci": _temiz(x.get("source", ""), 60) if x.get("source") else "",
+            "ozet": _temiz(x.get("title", ""), 200),
+        })
+        if len(sonuc) >= limit:
+            break
+    return sonuc
+
+
 GORSEL_MOTORLARI = [
     ("wikimedia", _commons),
-    ("duckduckgo", _ddg_gorsel_jina),
+    ("duckduckgo", _ddg_gorsel_dogrudan),   # en zengin meta (kaynak sayfa + boyut)
+    ("duckduckgo-jina", _ddg_gorsel_jina),
     ("wikipedia", _wikipedia_gorsel),
 ]
 
