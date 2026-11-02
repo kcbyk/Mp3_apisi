@@ -741,8 +741,12 @@ def web_ep():
     gorsel_tamam = True
     if gorsel:
         kalan_bekleme = max(0.2, min(gorsel_bekle, 6.0))
+        t_bekleme = time.time()
         gorsel_tamam = gorsel_hazir.wait(kalan_bekleme if not detay else max(kalan_bekleme, 6.0))
+        if not gorsel_tamam:      # iş parçacığı hâlâ sürüyorsa: geç gelen sonucu kurtar
+            gorsel_hazir.wait(1.0)
         gorseller, gorsel_motor, _gs = gorsel_kutu.get("veri", ([], "yok", 0))
+        _gorsel_bekleme_sn = round(time.time() - t_bekleme, 2)
         # og:image bulunamayan sonuçlar için domain eşleşmesi (ağ isteği yok, çok hızlı)
         if gorseller and gorsel_zengin:
             try:
@@ -764,6 +768,8 @@ def web_ep():
         govde["gorseller"] = gorseller
         govde["gorsel_adet"] = len(gorseller)
         govde["gorsel_motor"] = gorsel_motor
+        govde["gorsel_hazir"] = gorsel_tamam
+        govde["gorsel_bekleme_sn"] = _gorsel_bekleme_sn
         if not gorsel_tamam:
             govde["gorsel_ipucu"] = (f"/api/v1/gorsel-ara?q={q}&limit={gorsel_limit}"
                                      " — galeri henüz hazır değil (gorsel_bekle=5 ile daha uzun bekle)")
