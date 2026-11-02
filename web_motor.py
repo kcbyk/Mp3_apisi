@@ -815,8 +815,8 @@ def _wikipedia_gorsel(q, limit, timeout, deneme=0):
                     continue
                 sonuc.append({
                     "baslik": p.get("title", ""),
-                    "gorsel": th["source"],
-                    "kucuk": th["source"],
+                    "gorsel": _utm_temizle(th["source"]),
+                    "kucuk": _utm_temizle(th["source"]),
                     "genislik": th.get("width"),
                     "yukseklik": th.get("height"),
                     "site": f"https://{dil}.wikipedia.org/wiki/" +
