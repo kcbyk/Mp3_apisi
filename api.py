@@ -796,12 +796,13 @@ def web_ep():
 @app.get("/api/v1/gorsel-ara")
 @korumali
 def gorsel_ara_ep():
-    """🖼️ Görsel arama — Wikimedia Commons + DuckDuckGo (jina) zinciri, ~0.7-2.5 sn.
+    """🖼️ Görsel arama — Pinterest + Wikimedia Commons + DuckDuckGo zinciri, ~0.5-2.0 sn.
 
     Sonuç: {baslik, gorsel (tam boy), kucuk (thumbnail), genislik, yukseklik,
             site (kaynak sayfa), kaynak, lisans, ozet}
     """
     q = (request.args.get("q") or request.args.get("sorgu") or "").strip()
+    motor = (request.args.get("motor") or "").strip().lower() or None
     if not q:
         return _hata("q parametresi gerekli", 400)
     if "web" not in g.izin:
@@ -811,11 +812,63 @@ def gorsel_ara_ep():
     except ValueError:
         limit = 8
     t0 = time.time()
-    gorseller, motor, _gs = api_core.gorsel_ara(q, max(1, min(limit, 24)))
-    return jsonify(ok=True, q=q, adet=len(gorseller), motor=motor,
+    gorseller, secilen_motor, _gs = api_core.gorsel_ara(q, max(1, min(limit, 24)), motor=motor)
+    return jsonify(ok=True, q=q, adet=len(gorseller), motor=secilen_motor,
                    sure_sn=round(time.time() - t0, 2), gorseller=gorseller,
                    not_=("'gorsel' tam boy (paylaşılabilir), 'kucuk' grid/liste için uygundur; "
                          "'fotografci' ve 'lisans' alanları künye için hazırdır"))
+
+
+@app.route("/api/v1/pinterest", methods=["GET", "POST"])
+@app.route("/api/v1/ai/gorsel", methods=["GET", "POST"])
+@korumali
+def pinterest_ep():
+    """📌 Pinterest & Yapay Zeka Görsel Arama Uç Noktası.
+    
+    Yapay zekalar (GPT, Claude, Gemini, yerel LLM'ler) ve kullanıcılar için
+    yüksek çözünürlüklü doğrudan görsel bağlantıları ve Markdown formatında çıktı sunar.
+    """
+    if request.method == "POST":
+        d = request.get_json(silent=True) or {}
+    else:
+        d = request.args
+    
+    q = (d.get("q") or d.get("sorgu") or d.get("query") or "").strip()
+    if not q:
+        return _hata("q (veya query) parametresi gerekli", 400)
+    if "web" not in g.izin:
+        return _hata("Bu key 'web' sağlayıcısına izinli değil", 403)
+
+    try:
+        limit = int(d.get("limit") or 6)
+    except ValueError:
+        limit = 6
+    limit = max(1, min(limit, 24))
+
+    t0 = time.time()
+    gorseller, motor, sure = api_core.gorsel_ara(q, limit, motor="pinterest")
+    
+    # AI için Markdown blokları hazırla
+    ai_markdown_list = []
+    for g_item in gorseller:
+        baslik = g_item.get("baslik") or q
+        img = g_item.get("gorsel")
+        g_item["markdown"] = f"![{baslik}]({img})"
+        link = g_item.get('site') or ''
+        ai_markdown_list.append(f"![{baslik}]({img})\n*[{baslik}]({link})*")
+
+    ai_metin = "\n\n".join(ai_markdown_list)
+
+    return jsonify(
+        ok=True,
+        q=q,
+        adet=len(gorseller),
+        motor=motor,
+        sure_sn=round(time.time() - t0, 2),
+        gorseller=gorseller,
+        ai_markdown=ai_metin,
+        not_="Yapay zeka için 'markdown' veya 'ai_markdown' alanlarını doğrudan yanıtınızda kullanabilirsiniz."
+    )
 
 
 @app.get("/api/v1/web/durum")

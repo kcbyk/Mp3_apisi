@@ -992,6 +992,134 @@ def _unsplash(q, limit, timeout, deneme=0):
 _GORSEL_ANAHTARLI = {"pexels": _pexels, "pixabay": _pixabay, "unsplash": _unsplash}
 
 
+def _pinterest_gorsel(q, limit, timeout, deneme=0):
+    """📌 Pinterest arama motoru (BaseSearchResource) — yüksek çözünürlük & estetik görseller."""
+    try:
+        base_url = "https://www.pinterest.com"
+        source_url = f"/search/pins/?q={urllib.parse.quote(q)}&rs=typed"
+        headers = {
+            'Host': 'www.pinterest.com',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Ch-Ua': '"Chromium";v="137", "Not/A)Brand";v="24"',
+            'Sec-Ch-Ua-Model': '""',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json, text/javascript, */*, q=0.01',
+            'X-Pinterest-Source-Url': source_url,
+            'X-Pinterest-Appstate': 'active',
+            'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Screen-Dpr': '1',
+            'X-Pinterest-Pws-Handler': 'www/search/[scope].js',
+            'User-Agent': UA,
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Dest': 'empty',
+            'Referer': f'{base_url}/',
+        }
+
+        s = requests.Session()
+        s.mount("https://", _adapter)
+        s.mount("http://", _adapter)
+
+        try:
+            s.get(f"{base_url}{source_url}", headers=headers, timeout=(2.5, min(timeout, 3.5)))
+        except Exception:
+            pass
+
+        payload = {
+            "options": {
+                "applied_unified_filters": None,
+                "appliedProductFilters": "---",
+                "article": None,
+                "auto_correction_disabled": False,
+                "corpus": None,
+                "customized_rerank_type": None,
+                "domains": None,
+                "filters": None,
+                "journey_depth": None,
+                "page_size": str(max(limit, 20)),
+                "price_max": None,
+                "price_min": None,
+                "query_pin_sigs": None,
+                "query": q,
+                "redux_normalize_feed": True,
+                "request_params": None,
+                "rs": "typed",
+                "scope": "pins",
+                "selected_one_bar_modules": None,
+                "source_id": None,
+                "source_module_id": None,
+                "seoDrawerEnabled": False,
+                "source_url": urllib.parse.quote_plus(source_url),
+                "top_pin_id": None,
+                "top_pin_ids": None
+            },
+            "context": {}
+        }
+
+        encoded = urllib.parse.quote_plus(json.dumps(payload, separators=(',', ':')))
+        encoded = (
+            encoded.replace("%2520", "%20")
+            .replace("%252F", "%2F")
+            .replace("%253F", "%3F")
+            .replace("%252520", "%2520")
+            .replace("%253D", "%3D")
+            .replace("%2526", "%26")
+        )
+
+        epoch = int(time.time() * 1000)
+        api_url = (
+            f"{base_url}/resource/BaseSearchResource/get/"
+            f"?source_url={urllib.parse.quote_plus(source_url)}&data={encoded}&_={epoch}"
+        )
+
+        resp = s.get(api_url, headers=headers, timeout=(3.0, timeout))
+        if resp.status_code != 200:
+            return []
+
+        data = resp.json()
+        raw_results = data.get("resource_response", {}).get("data", {}).get("results", [])
+        out = []
+        for item in raw_results:
+            images = item.get("images", {})
+            orig = images.get("orig", {}) or {}
+            r736 = images.get("736x", {}) or {}
+            r474 = images.get("474x", {}) or {}
+
+            img_url = orig.get("url") or r736.get("url") or r474.get("url")
+            if not img_url:
+                continue
+
+            thumb_url = r736.get("url") or r474.get("url") or img_url
+            w = orig.get("width") or r736.get("width")
+            h = orig.get("height") or r736.get("height")
+
+            title = _temiz(item.get("grid_title") or item.get("title") or item.get("description") or q, 140)
+            pin_id = item.get("id")
+            site_url = f"https://www.pinterest.com/pin/{pin_id}/" if pin_id else "https://www.pinterest.com"
+            pinner = item.get("pinner", {}) or {}
+            author = _temiz(pinner.get("full_name") or pinner.get("username") or "", 60)
+
+            out.append({
+                "baslik": title,
+                "gorsel": img_url,
+                "kucuk": thumb_url,
+                "genislik": w,
+                "yukseklik": h,
+                "site": site_url,
+                "site_domain": "pinterest.com",
+                "kaynak": "pinterest",
+                "fotografci": author,
+                "lisans": "",
+                "ozet": _temiz(item.get("description") or title, 200),
+            })
+            if len(out) >= limit:
+                break
+        return out
+    except Exception:
+        return []
+
+
 def gorsel_anahtarli_var():
     return {
         "pexels": bool(os.environ.get("PEXELS_KEY") or os.environ.get("PEXELS_API_KEY")),
@@ -1001,6 +1129,7 @@ def gorsel_anahtarli_var():
 
 
 GORSEL_MOTORLARI = [
+    ("pinterest", _pinterest_gorsel),
     ("wikimedia", _commons),
     ("duckduckgo", _ddg_gorsel_dogrudan),   # en zengin meta (kaynak sayfa + boyut)
     ("duckduckgo-jina", _ddg_gorsel_jina),
@@ -1008,7 +1137,7 @@ GORSEL_MOTORLARI = [
 ]
 
 
-def gorsel_ara(q, limit=8):
+def gorsel_ara(q, limit=8, motor=None):
     """Hızlı görsel araması (asla boş dönmez).
     Dönen: (gorseller, motor, sure_sn)
     Görsel: {baslik, gorsel, kucuk, genislik, yukseklik, site, kaynak, lisans, ozet}"""
@@ -1016,6 +1145,17 @@ def gorsel_ara(q, limit=8):
     limit = max(1, min(int(limit or 8), 24))
     if not q:
         return [], "yok", 0.0
+
+    # Doğrudan motor seçildiyse (örn: motor="pinterest")
+    if motor and motor.lower() == "pinterest":
+        t0 = time.time()
+        p_res = _pinterest_gorsel(q, limit, timeout=min(GORSEL_BUTCE, 5.0))
+        if p_res:
+            with _kilit:
+                SON_ISTATISTIK["gorsel"] = {"q": q, "motor": "pinterest",
+                                            "sure_sn": round(time.time() - t0, 3), "adet": len(p_res)}
+            return p_res, "pinterest", round(time.time() - t0, 3)
+
     anahtar = ("g", q.lower(), limit)
     k = _onbellek_al(anahtar)
     if k:

@@ -148,11 +148,11 @@ def web_ara(q, limit=10):
         return core.web_ara(q, limit)
 
 
-def gorsel_ara(q, limit=8):
-    """Görsel arama — ⚡ web_motor (Wikimedia / DDG-jina zinciri).
+def gorsel_ara(q, limit=8, motor=None):
+    """Görsel arama — ⚡ web_motor (Pinterest / Wikimedia / DDG zinciri).
     Dönen: (gorseller, motor_adi, sure_sn)"""
     import web_motor
-    return web_motor.gorsel_ara(q, limit)
+    return web_motor.gorsel_ara(q, limit, motor=motor)
 
 
 def web_istatistik():
