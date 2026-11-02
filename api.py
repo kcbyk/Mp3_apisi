@@ -690,10 +690,13 @@ def web_ep():
         finally:
             gorsel_hazir.set()
 
+    # NOT: galeri işi metin aramasından SONRA başlatılır. Render free (0.1 CPU)
+    # gibi kısıtlı ortamlarda 12+ thread aynı anda yarışınca motorların kısa
+    # zaman aşımları dolmadan yanıt işlenemiyor → galeri boş dönüyordu.
+    sonuc, motor = api_core.web_ara(q, limit)
+
     if gorsel:
         threading.Thread(target=_gorsel_calistir, daemon=True).start()
-
-    sonuc, motor = api_core.web_ara(q, limit)
 
     # ---- metin sonuçlarına og:image / fotoğrafçı eklemesi (paralel, süreli) ----
     gorsel_zengin_kutu = {}
