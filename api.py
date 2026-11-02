@@ -302,7 +302,7 @@ def _admin_kontrol():
 
 @app.get("/api/v1/health")
 def health():
-    return jsonify(ok=True, servis="sarki-api", surum="5.1",
+    return jsonify(ok=True, servis="sarki-api", surum="5.2",
                    ffmpeg=api_core.ffmpeg_var(),
                    zaman=time.strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -802,10 +802,14 @@ def web_durum_ep():
     """🔍 Web motoru sağlığı: hangi anahtarlı sağlayıcı tanımlı, son çağrı hızı."""
     if "web" not in g.izin:
         return _hata("Bu key 'web' sağlayıcısına izinli değil", 403)
-    return jsonify(ok=True, anahtarli=api_core.anahtarli_saglayicilar(),
+    return jsonify(ok=True,
+                   anahtarli=api_core.anahtarli_saglayicilar(),
+                   gorsel_anahtarli=api_core.gorsel_anahtarli_saglayicilar(),
                    son=api_core.web_istatistik(),
-                   not_="Anahtarsız zincir: bing-rss → bing → wikipedia → google-news → ddg. "
-                        "Kalıcı kalite için BRAVE_KEY / SERPER_KEY / TAVILY_KEY ekleyin.")
+                   not_=("Metin: anahtarsız zincir bing-rss → bing → wikipedia → google-news → ddg "
+                         "(kalıcı kalite için BRAVE_KEY / SERPER_KEY / TAVILY_KEY). "
+                         "Görsel: wikimedia → duckduckgo → wikipedia "
+                         "(kalıcı kalite + fotoğrafçı bilgisi için PEXELS_KEY / PIXABAY_KEY / UNSPLASH_KEY)."))
 
 
 @app.get("/api/v1/kapak")

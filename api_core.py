@@ -172,6 +172,14 @@ def anahtarli_saglayicilar():
         return {}
 
 
+def gorsel_anahtarli_saglayicilar():
+    try:
+        import web_motor
+        return web_motor.gorsel_anahtarli_var()
+    except Exception:
+        return {}
+
+
 def link_coz(item, fmt="mp3", kalite="320"):
     """Sonucu, INDIRMEDEN oynatilabilecek direkt CDN linkine cevirir. (url, hata)
     Sunucu diske hic yazmaz; oynatici linkten dogrudan akitar."""

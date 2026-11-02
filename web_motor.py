@@ -883,6 +883,107 @@ def _ddg_gorsel_dogrudan(q, limit, timeout, deneme=0):
     return sonuc
 
 
+
+
+# ---------------------------------------------------------------------------
+#  İSTEĞE BAĞLI ANAHTARLI GÖRSEL SAĞLAYICILARI (varsa en öncelikli)
+# ---------------------------------------------------------------------------
+# Veri merkezi IP'lerinde DDG/Bing görselleri engelleniyor. Aşağıdaki ücretsiz
+# API'lerden biri tanımlanırsa galeri kalitesi ve "fotoğrafçı" bilgisi kalıcı düzelir.
+#   PEXELS_KEY    → pexels.com API      (ücretsiz 200 istek/saat)  ⭐ en iyi
+#   PIXABAY_KEY   → pixabay.com API     (ücretsiz 100 istek/dk)
+#   UNSPLASH_KEY  → unsplash.com API    (ücretsiz 50 istek/saat)
+
+def _pexels(q, limit, timeout, deneme=0):
+    k = (os.environ.get("PEXELS_KEY") or os.environ.get("PEXELS_API_KEY") or "").strip()
+    if not k:
+        return []
+    r = _S.get("https://api.pexels.com/v1/search",
+               params={"query": q, "per_page": max(limit, 10), "locale": "tr-TR"},
+               headers={"Authorization": k}, timeout=(3.5, timeout))
+    if r.status_code != 200:
+        return []
+    out = []
+    for x in (r.json().get("photos") or []):
+        src = x.get("src") or {}
+        out.append({
+            "baslik": _temiz(x.get("alt") or f"Pexels fotoğrafı {x.get('id')}", 140),
+            "gorsel": src.get("original") or src.get("large2x") or src.get("large"),
+            "kucuk": src.get("medium") or src.get("small"),
+            "genislik": x.get("width"), "yukseklik": x.get("height"),
+            "site": x.get("url"), "site_domain": "pexels.com",
+            "kaynak": "pexels", "fotografci": _temiz(x.get("photographer", ""), 60),
+            "lisans": "Pexels License", "ozet": _temiz(x.get("alt", ""), 200),
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _pixabay(q, limit, timeout, deneme=0):
+    k = (os.environ.get("PIXABAY_KEY") or os.environ.get("PIXABAY_API_KEY") or "").strip()
+    if not k:
+        return []
+    r = _S.get("https://pixabay.com/api/",
+               params={"key": k, "q": q, "image_type": "photo", "per_page": max(3, min(limit, 200)),
+                       "safesearch": "true"}, timeout=(3.5, timeout))
+    if r.status_code != 200:
+        return []
+    out = []
+    for x in (r.json().get("hits") or []):
+        out.append({
+            "baslik": _temiz(x.get("tags", ""), 140),
+            "gorsel": x.get("largeImageURL") or x.get("webformatURL"),
+            "kucuk": x.get("webformatURL"),
+            "genislik": x.get("imageWidth"), "yukseklik": x.get("imageHeight"),
+            "site": x.get("pageURL"), "site_domain": "pixabay.com",
+            "kaynak": "pixabay", "fotografci": _temiz(x.get("user", ""), 60),
+            "lisans": "Pixabay License", "ozet": _temiz(x.get("tags", ""), 200),
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _unsplash(q, limit, timeout, deneme=0):
+    k = (os.environ.get("UNSPLASH_KEY") or os.environ.get("UNSPLASH_ACCESS_KEY") or "").strip()
+    if not k:
+        return []
+    r = _S.get("https://api.unsplash.com/search/photos",
+               params={"query": q, "per_page": max(limit, 10)},
+               headers={"Authorization": f"Client-ID {k}"}, timeout=(3.5, timeout))
+    if r.status_code != 200:
+        return []
+    out = []
+    for x in (r.json().get("results") or []):
+        urls = x.get("urls") or {}
+        out.append({
+            "baslik": _temiz(x.get("alt_description") or x.get("description") or "", 140),
+            "gorsel": urls.get("full") or urls.get("regular"),
+            "kucuk": urls.get("small"),
+            "genislik": x.get("width"), "yukseklik": x.get("height"),
+            "site": (x.get("links") or {}).get("html"),
+            "site_domain": "unsplash.com",
+            "kaynak": "unsplash",
+            "fotografci": _temiz((x.get("user") or {}).get("name", ""), 60),
+            "lisans": "Unsplash License", "ozet": _temiz(x.get("description") or "", 200),
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+_GORSEL_ANAHTARLI = {"pexels": _pexels, "pixabay": _pixabay, "unsplash": _unsplash}
+
+
+def gorsel_anahtarli_var():
+    return {
+        "pexels": bool(os.environ.get("PEXELS_KEY") or os.environ.get("PEXELS_API_KEY")),
+        "pixabay": bool(os.environ.get("PIXABAY_KEY") or os.environ.get("PIXABAY_API_KEY")),
+        "unsplash": bool(os.environ.get("UNSPLASH_KEY") or os.environ.get("UNSPLASH_ACCESS_KEY")),
+    }
+
+
 GORSEL_MOTORLARI = [
     ("wikimedia", _commons),
     ("duckduckgo", _ddg_gorsel_dogrudan),   # en zengin meta (kaynak sayfa + boyut)
@@ -909,7 +1010,9 @@ def gorsel_ara(q, limit=8):
     t0 = time.time()
     bitis = t0 + GORSEL_BUTCE
     q_gorsel = _gorsel_sorgu(q)
-    gorseller, motor, gecen, puan = _yaris(q_gorsel, limit, GORSEL_MOTORLARI,
+    gvar = gorsel_anahtarli_var()
+    motorlar = [(ad, fn) for ad, fn in GORSEL_MOTORLARI if ad not in _GORSEL_ANAHTARLI or gvar.get(ad)]
+    gorseller, motor, gecen, puan = _yaris(q_gorsel, limit, motorlar,
                                            min(GORSEL_BUTCE, 2.6),
                                            bitis=bitis, birlestir=True)
     if puan < ALAKA_ESIK:

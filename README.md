@@ -271,6 +271,20 @@ curl -s "$B/api/v1/web?q=BMW+M4+photos&detay=1&key=$K"
 }
 ```
 
+### 🔑 Görsel kalitesini kalıcı düzeltmek (isteğe bağlı, ücretsiz)
+
+Anahtarsız katmanda Wikimedia her zaman çalışır; DuckDuckGo/Bing görselleri ise veri
+merkezi IP'lerinde engellenir. Render → Environment'a **birini** ekle:
+
+| Değişken | Sağlayıcı | Ücretsiz kota | Kazanç |
+|---|---|---|---|
+| `PEXELS_KEY` | Pexels API | 200 istek/saat | ⭐ tam boy + **fotoğrafçı adı** + sayfa URL'i |
+| `PIXABAY_KEY` | Pixabay API | 100 istek/dk | yüksek çözünürlük + kullanıcı adı |
+| `UNSPLASH_KEY` | Unsplash API | 50 istek/saat | editoryal fotoğraf + fotoğrafçı |
+
+Eklenince bu sağlayıcı galeri zincirinde ilk sıraya geçer; her öğede `fotografci`,
+`lisans`, `site` alanları dolu gelir.
+
 ### Neden bazı sonuçlarda `image_url` boş?
 
 Fotoğraf siteleri (Unsplash 401, Pexels/Edmunds 403) veri merkezi IP'lerinden gelen
