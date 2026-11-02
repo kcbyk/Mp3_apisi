@@ -713,20 +713,6 @@ def web_ep():
         threading.Thread(target=_zengin_calistir, daemon=True).start()
         zengin_bitti.wait(2.0)
 
-    # ---- galeri sonucunu topla ----
-    gorseller, gorsel_motor = [], None
-    gorsel_tamam = True
-    if gorsel:
-        gorsel_tamam = gorsel_hazir.wait(max(0.2, min(gorsel_bekle, 6.0)))
-        gorseller, gorsel_motor, _gs = gorsel_kutu.get("veri", ([], "yok", 0))
-        # og:image bulunamayan sonuçlar için domain eşleşmesi (ağ isteği yok, çok hızlı)
-        if gorseller and gorsel_zengin:
-            try:
-                import web_motor as _wm
-                _wm.sonuclara_gorsel_ekle(sonuc, adet=0, butce=0.05, galeri=gorseller)
-            except Exception:
-                pass
-
     if detay and sonuc:
         # RAG modu: ilk 3 sonucu paralel oku (jina) → metin alanını doldur
         kutular = {}
@@ -741,12 +727,29 @@ def web_ep():
                  for i, s in enumerate(sonuc[:3])]
         for t in isler:
             t.start()
+        detay_bitis = time.time() + 12          # jina toplam süre tavanı
         for t in isler:
-            t.join(timeout=45)
+            t.join(timeout=max(0.1, detay_bitis - time.time()))
         for i, v in kutular.items():
-            sonuc[i]["metin"] = v["metin"]
+            if i < len(sonuc):
+                sonuc[i]["metin"] = v["metin"]
             sonuc[i]["metin_karakter"] = v["karakter"]
             sonuc[i]["metin_kirpildi"] = v["kirpildi"]
+
+    # ---- galeri sonucunu topla (detay okumalarından SONRA: geç gelen galeri kaybolmasın) ----
+    gorseller, gorsel_motor = [], None
+    gorsel_tamam = True
+    if gorsel:
+        kalan_bekleme = max(0.2, min(gorsel_bekle, 6.0))
+        gorsel_tamam = gorsel_hazir.wait(kalan_bekleme if not detay else max(kalan_bekleme, 6.0))
+        gorseller, gorsel_motor, _gs = gorsel_kutu.get("veri", ([], "yok", 0))
+        # og:image bulunamayan sonuçlar için domain eşleşmesi (ağ isteği yok, çok hızlı)
+        if gorseller and gorsel_zengin:
+            try:
+                import web_motor as _wm
+                _wm.sonuclara_gorsel_ekle(sonuc, adet=0, butce=0.05, galeri=gorseller)
+            except Exception:
+                pass
 
     # özet: kaç sonuçta görsel var
     gorselli = sum(1 for s in sonuc if s.get("image_url"))
