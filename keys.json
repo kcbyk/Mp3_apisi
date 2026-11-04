@@ -70,5 +70,17 @@
   "olusturma": "2026-11-02 08:48",
   "kullanim": 0,
   "son_kullanim": null
+ },
+ "sk-5ec54f01bd11e9a4d698a358": {
+  "isim": "brave-clone kalici",
+  "saglayicilar": [
+   "youtube",
+   "soundcloud",
+   "archive",
+   "web"
+  ],
+  "olusturma": "2026-11-04 10:52",
+  "kullanim": 0,
+  "son_kullanim": null
  }
 }
